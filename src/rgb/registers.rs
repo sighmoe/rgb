@@ -48,6 +48,24 @@ pub struct Registers {
 }
 
 impl Registers {
+    pub fn new() -> Self {
+        let flags = FlagsRegister {
+            zero: false,
+            subtract: false,
+            half_carry: false,
+            carry: false,
+        };
+        Registers {
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            e: 0,
+            f: flags,
+            h: 0,
+            l: 0,
+        }
+    }
     fn get_af(&self) -> u16 {
         (self.a as u16) << 8 | u8::from(self.f) as u16
     }
