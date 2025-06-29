@@ -1,4 +1,5 @@
 use crate::rgb::instructions::{Instruction, InstructionKind, ArgKind, decode_instruction, get_instruction_size, decode_cb_instruction, get_cb_instruction_size, JumpCondition};
+use crate::rgb::instruction_timing::get_instruction_cycles;
 use crate::rgb::memory::MemoryMap;
 use crate::rgb::registers::Registers;
 
@@ -11,6 +12,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    #[allow(dead_code)] // Public API method
     pub fn new() -> Self {
         let registers = Registers::new();
         let mut mmap = MemoryMap::new();
@@ -65,7 +67,7 @@ impl Cpu {
         instruction
     }
 
-    pub fn execute(&mut self, instruction: Instruction) {
+    pub fn execute(&mut self, instruction: Instruction) -> u8 {
         match instruction.kind {
             InstructionKind::NOP => {
                 // Do nothing
@@ -281,7 +283,106 @@ impl Cpu {
                     (ArgKind::A, ArgKind::L) => {
                         self.registers.a = self.add(self.registers.l);
                     }
+                    (ArgKind::A, ArgKind::HL) => {
+                        let addr = self.registers.get_hl();
+                        let value = self.mmap.read(addr);
+                        self.registers.a = self.add(value);
+                    }
+                    (ArgKind::A, ArgKind::Immediate(value)) => {
+                        self.registers.a = self.add(value);
+                    }
+                    // 16-bit ADD instructions (ADD HL,reg16)
+                    (ArgKind::HL, ArgKind::BC) => {
+                        let hl_value = self.registers.get_hl();
+                        let bc_value = self.registers.get_bc();
+                        let result = self.add16(hl_value, bc_value);
+                        self.registers.set_hl(result);
+                    }
+                    (ArgKind::HL, ArgKind::DE) => {
+                        let hl_value = self.registers.get_hl();
+                        let de_value = self.registers.get_de();
+                        let result = self.add16(hl_value, de_value);
+                        self.registers.set_hl(result);
+                    }
+                    (ArgKind::HL, ArgKind::HL) => {
+                        let hl_value = self.registers.get_hl();
+                        let result = self.add16(hl_value, hl_value);
+                        self.registers.set_hl(result);
+                    }
+                    (ArgKind::HL, ArgKind::SP) => {
+                        let hl_value = self.registers.get_hl();
+                        let result = self.add16(hl_value, self.sp);
+                        self.registers.set_hl(result);
+                    }
                     _ => panic!("Unsupported ADD instruction variant"),
+                }
+            }
+            InstructionKind::SUB(dest, src) => {
+                match (dest, src) {
+                    (ArgKind::A, ArgKind::A) => {
+                        self.registers.a = self.subtract(self.registers.a);
+                    }
+                    (ArgKind::A, ArgKind::B) => {
+                        self.registers.a = self.subtract(self.registers.b);
+                    }
+                    (ArgKind::A, ArgKind::C) => {
+                        self.registers.a = self.subtract(self.registers.c);
+                    }
+                    (ArgKind::A, ArgKind::D) => {
+                        self.registers.a = self.subtract(self.registers.d);
+                    }
+                    (ArgKind::A, ArgKind::E) => {
+                        self.registers.a = self.subtract(self.registers.e);
+                    }
+                    (ArgKind::A, ArgKind::H) => {
+                        self.registers.a = self.subtract(self.registers.h);
+                    }
+                    (ArgKind::A, ArgKind::L) => {
+                        self.registers.a = self.subtract(self.registers.l);
+                    }
+                    (ArgKind::A, ArgKind::HL) => {
+                        let addr = self.registers.get_hl();
+                        let value = self.mmap.read(addr);
+                        self.registers.a = self.subtract(value);
+                    }
+                    (ArgKind::A, ArgKind::Immediate(value)) => {
+                        self.registers.a = self.subtract(value);
+                    }
+                    _ => panic!("Unsupported SUB instruction variant"),
+                }
+            }
+            InstructionKind::SBC(dest, src) => {
+                match (dest, src) {
+                    (ArgKind::A, ArgKind::A) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.a);
+                    }
+                    (ArgKind::A, ArgKind::B) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.b);
+                    }
+                    (ArgKind::A, ArgKind::C) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.c);
+                    }
+                    (ArgKind::A, ArgKind::D) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.d);
+                    }
+                    (ArgKind::A, ArgKind::E) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.e);
+                    }
+                    (ArgKind::A, ArgKind::H) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.h);
+                    }
+                    (ArgKind::A, ArgKind::L) => {
+                        self.registers.a = self.subtract_with_carry(self.registers.l);
+                    }
+                    (ArgKind::A, ArgKind::HL) => {
+                        let addr = self.registers.get_hl();
+                        let value = self.mmap.read(addr);
+                        self.registers.a = self.subtract_with_carry(value);
+                    }
+                    (ArgKind::A, ArgKind::Immediate(value)) => {
+                        self.registers.a = self.subtract_with_carry(value);
+                    }
+                    _ => panic!("Unsupported SBC instruction variant"),
                 }
             }
             InstructionKind::INC(register) => {
@@ -310,6 +411,15 @@ impl Cpu {
                     _ => panic!("Unsupported INC instruction variant"),
                 }
             }
+            InstructionKind::INC_MEM(addr_reg) => {
+                let address = match addr_reg {
+                    ArgKind::HL => self.registers.get_hl(),
+                    _ => panic!("Unsupported INC_MEM address register"),
+                };
+                let value = self.mmap.read(address);
+                let new_value = self.increment(value);
+                self.mmap.write(address, new_value);
+            }
             InstructionKind::DEC(register) => {
                 match register {
                     ArgKind::A => {
@@ -336,6 +446,15 @@ impl Cpu {
                     _ => panic!("Unsupported DEC instruction variant"),
                 }
             }
+            InstructionKind::DEC_MEM(addr_reg) => {
+                let address = match addr_reg {
+                    ArgKind::HL => self.registers.get_hl(),
+                    _ => panic!("Unsupported DEC_MEM address register"),
+                };
+                let value = self.mmap.read(address);
+                let new_value = self.decrement(value);
+                self.mmap.write(address, new_value);
+            }
             InstructionKind::INC16(register) => {
                 match register {
                     ArgKind::BC => {
@@ -357,6 +476,27 @@ impl Cpu {
                 }
                 // 16-bit increment doesn't affect flags
             }
+            InstructionKind::DEC16(register) => {
+                match register {
+                    ArgKind::BC => {
+                        let value = self.registers.get_bc().wrapping_sub(1);
+                        self.registers.set_bc(value);
+                    }
+                    ArgKind::DE => {
+                        let value = self.registers.get_de().wrapping_sub(1);
+                        self.registers.set_de(value);
+                    }
+                    ArgKind::HL => {
+                        let value = self.registers.get_hl().wrapping_sub(1);
+                        self.registers.set_hl(value);
+                    }
+                    ArgKind::SP => {
+                        self.sp = self.sp.wrapping_sub(1);
+                    }
+                    _ => panic!("Unsupported DEC16 instruction variant"),
+                }
+                // 16-bit decrement doesn't affect flags
+            }
             InstructionKind::BIT(bit, register) => {
                 let value = match register {
                     ArgKind::A => self.registers.a,
@@ -370,6 +510,32 @@ impl Cpu {
                 };
                 self.test_bit(bit, value);
             }
+            InstructionKind::RES(bit, register) => {
+                let mask = !(1 << bit);
+                match register {
+                    ArgKind::A => self.registers.a &= mask,
+                    ArgKind::B => self.registers.b &= mask,
+                    ArgKind::C => self.registers.c &= mask,
+                    ArgKind::D => self.registers.d &= mask,
+                    ArgKind::E => self.registers.e &= mask,
+                    ArgKind::H => self.registers.h &= mask,
+                    ArgKind::L => self.registers.l &= mask,
+                    _ => panic!("Unsupported RES instruction variant"),
+                }
+            }
+            InstructionKind::SET(bit, register) => {
+                let mask = 1 << bit;
+                match register {
+                    ArgKind::A => self.registers.a |= mask,
+                    ArgKind::B => self.registers.b |= mask,
+                    ArgKind::C => self.registers.c |= mask,
+                    ArgKind::D => self.registers.d |= mask,
+                    ArgKind::E => self.registers.e |= mask,
+                    ArgKind::H => self.registers.h |= mask,
+                    ArgKind::L => self.registers.l |= mask,
+                    _ => panic!("Unsupported SET instruction variant"),
+                }
+            }
             InstructionKind::JP(condition, address) => {
                 if self.check_jump_condition(condition) {
                     self.pc = address;
@@ -377,14 +543,32 @@ impl Cpu {
                     // PC was already incremented in decode, no additional action needed
                 }
             }
+            InstructionKind::JP_HL => {
+                self.pc = self.registers.get_hl();
+            }
             InstructionKind::CALL(address) => {
                 self.push_stack(self.pc);
                 self.pc = address;
             }
+            InstructionKind::CALL_COND(condition, address) => {
+                if self.check_jump_condition(condition) {
+                    self.push_stack(self.pc);
+                    self.pc = address;
+                }
+            }
             InstructionKind::RET => {
                 self.pc = self.pop_stack();
             }
+            InstructionKind::RET_COND(condition) => {
+                if self.check_jump_condition(condition) {
+                    self.pc = self.pop_stack();
+                }
+            }
             InstructionKind::HALT => {
+                self.halted = true;
+            }
+            InstructionKind::STOP => {
+                // STOP instruction - similar to HALT but stops CPU and LCD
                 self.halted = true;
             }
             
@@ -398,6 +582,10 @@ impl Cpu {
                     ArgKind::E => self.registers.e,
                     ArgKind::H => self.registers.h,
                     ArgKind::L => self.registers.l,
+                    ArgKind::HL => {
+                        let addr = self.registers.get_hl();
+                        self.mmap.read(addr)
+                    }
                     ArgKind::Immediate(value) => value,
                     _ => panic!("Unsupported XOR source"),
                 };
@@ -438,6 +626,10 @@ impl Cpu {
                     ArgKind::E => self.registers.e,
                     ArgKind::H => self.registers.h,
                     ArgKind::L => self.registers.l,
+                    ArgKind::HL => {
+                        let addr = self.registers.get_hl();
+                        self.mmap.read(addr)
+                    }
                     ArgKind::Immediate(value) => value,
                     _ => panic!("Unsupported OR source"),
                 };
@@ -469,6 +661,20 @@ impl Cpu {
                     self.registers.f.carry = self.registers.a < src_value;
                 }
             }
+            InstructionKind::CP_MEM(dest, addr_reg) => {
+                let address = match addr_reg {
+                    ArgKind::HL => self.registers.get_hl(),
+                    _ => panic!("Unsupported CP_MEM address register"),
+                };
+                let src_value = self.mmap.read(address);
+                if let ArgKind::A = dest {
+                    let result = self.registers.a.wrapping_sub(src_value);
+                    self.registers.f.zero = result == 0;
+                    self.registers.f.subtract = true;
+                    self.registers.f.half_carry = (self.registers.a & 0x0F) < (src_value & 0x0F);
+                    self.registers.f.carry = self.registers.a < src_value;
+                }
+            }
             
             // Jump relative
             InstructionKind::JR(condition, offset) => {
@@ -480,6 +686,8 @@ impl Cpu {
             // Memory operations
             InstructionKind::LD_MEM(addr_reg, src) => {
                 let address = match addr_reg {
+                    ArgKind::BC => self.registers.get_bc(),
+                    ArgKind::DE => self.registers.get_de(),
                     ArgKind::HL => self.registers.get_hl(),
                     _ => panic!("Unsupported LD_MEM address register"),
                 };
@@ -564,6 +772,40 @@ impl Cpu {
                 }
                 let new_hl = address.wrapping_add(1);
                 self.registers.set_hl(new_hl);
+            }
+            InstructionKind::LD_MEM_16(addr, src) => {
+                let address = match addr {
+                    ArgKind::Immediate16(addr) => addr,
+                    _ => panic!("Unsupported LD_MEM_16 address type"),
+                };
+                let value = match src {
+                    ArgKind::A => self.registers.a,
+                    ArgKind::B => self.registers.b,
+                    ArgKind::C => self.registers.c,
+                    ArgKind::D => self.registers.d,
+                    ArgKind::E => self.registers.e,
+                    ArgKind::H => self.registers.h,
+                    ArgKind::L => self.registers.l,
+                    _ => panic!("Unsupported LD_MEM_16 source"),
+                };
+                self.mmap.write(address, value);
+            }
+            InstructionKind::LD_FROM_MEM_16(dest, addr) => {
+                let address = match addr {
+                    ArgKind::Immediate16(addr) => addr,
+                    _ => panic!("Unsupported LD_FROM_MEM_16 address type"),
+                };
+                let value = self.mmap.read(address);
+                match dest {
+                    ArgKind::A => self.registers.a = value,
+                    ArgKind::B => self.registers.b = value,
+                    ArgKind::C => self.registers.c = value,
+                    ArgKind::D => self.registers.d = value,
+                    ArgKind::E => self.registers.e = value,
+                    ArgKind::H => self.registers.h = value,
+                    ArgKind::L => self.registers.l = value,
+                    _ => panic!("Unsupported LD_FROM_MEM_16 destination"),
+                };
             }
             
             // I/O operations
@@ -703,7 +945,209 @@ impl Cpu {
                 self.registers.f.half_carry = false;
                 self.registers.f.carry = new_carry;
             }
+            
+            // ADC - Add with carry
+            InstructionKind::ADC(dest, src) => {
+                let carry = if self.registers.f.carry { 1 } else { 0 };
+                let (a_val, src_val) = match (dest, src) {
+                    (ArgKind::A, ArgKind::B) => (self.registers.a, self.registers.b),
+                    (ArgKind::A, ArgKind::C) => (self.registers.a, self.registers.c),
+                    (ArgKind::A, ArgKind::D) => (self.registers.a, self.registers.d),
+                    (ArgKind::A, ArgKind::E) => (self.registers.a, self.registers.e),
+                    (ArgKind::A, ArgKind::H) => (self.registers.a, self.registers.h),
+                    (ArgKind::A, ArgKind::L) => (self.registers.a, self.registers.l),
+                    (ArgKind::A, ArgKind::A) => (self.registers.a, self.registers.a),
+                    (ArgKind::A, ArgKind::HL) => (self.registers.a, self.mmap.read(self.registers.get_hl())),
+                    (ArgKind::A, ArgKind::Immediate(val)) => (self.registers.a, val),
+                    _ => panic!("Invalid ADC operands"),
+                };
+                
+                let result = a_val.wrapping_add(src_val).wrapping_add(carry);
+                let half_carry = (a_val & 0x0F) + (src_val & 0x0F) + carry > 0x0F;
+                let full_carry = (a_val as u16) + (src_val as u16) + (carry as u16) > 0xFF;
+                
+                self.registers.a = result;
+                self.registers.f.zero = result == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = half_carry;
+                self.registers.f.carry = full_carry;
+            }
+            
+            // RST - Restart (call to fixed address)
+            InstructionKind::RST(addr) => {
+                self.push_stack(self.pc);
+                self.pc = addr as u16;
+            }
+            
+            // CB-prefixed rotate/shift instructions
+            InstructionKind::RLC(reg) => {
+                let (value, new_value) = match reg {
+                    ArgKind::A => (self.registers.a, self.registers.a.rotate_left(1)),
+                    ArgKind::B => (self.registers.b, self.registers.b.rotate_left(1)),
+                    ArgKind::C => (self.registers.c, self.registers.c.rotate_left(1)),
+                    ArgKind::D => (self.registers.d, self.registers.d.rotate_left(1)),
+                    ArgKind::E => (self.registers.e, self.registers.e.rotate_left(1)),
+                    ArgKind::H => (self.registers.h, self.registers.h.rotate_left(1)),
+                    ArgKind::L => (self.registers.l, self.registers.l.rotate_left(1)),
+                    _ => panic!("Invalid RLC register"),
+                };
+                
+                self.registers.f.zero = new_value == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = (value & 0x80) != 0;
+                
+                match reg {
+                    ArgKind::A => self.registers.a = new_value,
+                    ArgKind::B => self.registers.b = new_value,
+                    ArgKind::C => self.registers.c = new_value,
+                    ArgKind::D => self.registers.d = new_value,
+                    ArgKind::E => self.registers.e = new_value,
+                    ArgKind::H => self.registers.h = new_value,
+                    ArgKind::L => self.registers.l = new_value,
+                    _ => {}
+                }
+            }
+            
+            InstructionKind::RRC(reg) => {
+                let (value, new_value) = match reg {
+                    ArgKind::A => (self.registers.a, self.registers.a.rotate_right(1)),
+                    ArgKind::B => (self.registers.b, self.registers.b.rotate_right(1)),
+                    ArgKind::C => (self.registers.c, self.registers.c.rotate_right(1)),
+                    ArgKind::D => (self.registers.d, self.registers.d.rotate_right(1)),
+                    ArgKind::E => (self.registers.e, self.registers.e.rotate_right(1)),
+                    ArgKind::H => (self.registers.h, self.registers.h.rotate_right(1)),
+                    ArgKind::L => (self.registers.l, self.registers.l.rotate_right(1)),
+                    _ => panic!("Invalid RRC register"),
+                };
+                
+                self.registers.f.zero = new_value == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = (value & 0x01) != 0;
+                
+                match reg {
+                    ArgKind::A => self.registers.a = new_value,
+                    ArgKind::B => self.registers.b = new_value,
+                    ArgKind::C => self.registers.c = new_value,
+                    ArgKind::D => self.registers.d = new_value,
+                    ArgKind::E => self.registers.e = new_value,
+                    ArgKind::H => self.registers.h = new_value,
+                    ArgKind::L => self.registers.l = new_value,
+                    _ => {}
+                }
+            }
+            
+            InstructionKind::SLA(reg) => {
+                let value = match reg {
+                    ArgKind::A => self.registers.a,
+                    ArgKind::B => self.registers.b,
+                    ArgKind::C => self.registers.c,
+                    ArgKind::D => self.registers.d,
+                    ArgKind::E => self.registers.e,
+                    ArgKind::H => self.registers.h,
+                    ArgKind::L => self.registers.l,
+                    _ => panic!("Invalid SLA register"),
+                };
+                
+                let new_value = value << 1;
+                self.registers.f.zero = new_value == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = (value & 0x80) != 0;
+                
+                match reg {
+                    ArgKind::A => self.registers.a = new_value,
+                    ArgKind::B => self.registers.b = new_value,
+                    ArgKind::C => self.registers.c = new_value,
+                    ArgKind::D => self.registers.d = new_value,
+                    ArgKind::E => self.registers.e = new_value,
+                    ArgKind::H => self.registers.h = new_value,
+                    ArgKind::L => self.registers.l = new_value,
+                    _ => {}
+                }
+            }
+            
+            InstructionKind::SRA(reg) => {
+                let value = match reg {
+                    ArgKind::A => self.registers.a,
+                    ArgKind::B => self.registers.b,
+                    ArgKind::C => self.registers.c,
+                    ArgKind::D => self.registers.d,
+                    ArgKind::E => self.registers.e,
+                    ArgKind::H => self.registers.h,
+                    ArgKind::L => self.registers.l,
+                    _ => panic!("Invalid SRA register"),
+                };
+                
+                let new_value = (value >> 1) | (value & 0x80); // Preserve sign bit
+                self.registers.f.zero = new_value == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = (value & 0x01) != 0;
+                
+                match reg {
+                    ArgKind::A => self.registers.a = new_value,
+                    ArgKind::B => self.registers.b = new_value,
+                    ArgKind::C => self.registers.c = new_value,
+                    ArgKind::D => self.registers.d = new_value,
+                    ArgKind::E => self.registers.e = new_value,
+                    ArgKind::H => self.registers.h = new_value,
+                    ArgKind::L => self.registers.l = new_value,
+                    _ => {}
+                }
+            }
+            
+            InstructionKind::SRL(reg) => {
+                let value = match reg {
+                    ArgKind::A => self.registers.a,
+                    ArgKind::B => self.registers.b,
+                    ArgKind::C => self.registers.c,
+                    ArgKind::D => self.registers.d,
+                    ArgKind::E => self.registers.e,
+                    ArgKind::H => self.registers.h,
+                    ArgKind::L => self.registers.l,
+                    _ => panic!("Invalid SRL register"),
+                };
+                
+                let new_value = value >> 1;
+                self.registers.f.zero = new_value == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = (value & 0x01) != 0;
+                
+                match reg {
+                    ArgKind::A => self.registers.a = new_value,
+                    ArgKind::B => self.registers.b = new_value,
+                    ArgKind::C => self.registers.c = new_value,
+                    ArgKind::D => self.registers.d = new_value,
+                    ArgKind::E => self.registers.e = new_value,
+                    ArgKind::H => self.registers.h = new_value,
+                    ArgKind::L => self.registers.l = new_value,
+                    _ => {}
+                }
+            }
         }
+        
+        // Calculate cycles for this instruction
+        // For conditional instructions, we need to check if condition was taken
+        let condition_taken = match &instruction.kind {
+            InstructionKind::JP(condition, _) => {
+                *condition == JumpCondition::Always || self.check_jump_condition(*condition)
+            }
+            InstructionKind::JR(condition, _) => {
+                *condition == JumpCondition::Always || self.check_jump_condition(*condition)
+            }
+            InstructionKind::CALL_COND(condition, _) => {
+                self.check_jump_condition(*condition)
+            }
+            InstructionKind::RET_COND(condition) => {
+                self.check_jump_condition(*condition)
+            }
+            _ => false, // Non-conditional instructions
+        };
+        
+        get_instruction_cycles(&instruction.kind, condition_taken)
     }
 
     fn add(&mut self, value: u8) -> u8 {
@@ -715,6 +1159,20 @@ impl Cpu {
         // together result in a value bigger than 0xF. If the result is larger than 0xF
         // than the addition caused a carry from the lower nibble to the upper nibble.
         self.registers.f.half_carry = (self.registers.a & 0xF) + (value & 0xF) > 0xF;
+        new_value
+    }
+
+    fn add16(&mut self, dest_value: u16, src_value: u16) -> u16 {
+        let (new_value, did_overflow) = dest_value.overflowing_add(src_value);
+        // 16-bit ADD affects flags differently than 8-bit:
+        // Z: Not affected (keep current value)
+        // N: Reset to 0
+        // H: Set if carry from bit 11 to bit 12
+        // C: Set if carry from bit 15 to bit 16 (overflow)
+        self.registers.f.subtract = false;
+        self.registers.f.carry = did_overflow;
+        // Half carry for 16-bit: carry from bit 11 (0x0FFF mask)
+        self.registers.f.half_carry = (dest_value & 0x0FFF) + (src_value & 0x0FFF) > 0x0FFF;
         new_value
     }
     
@@ -736,6 +1194,27 @@ impl Cpu {
         self.registers.f.half_carry = (value & 0x0F) == 0x00;
         // Carry flag is not affected by DEC
         new_value
+    }
+    
+    fn subtract(&mut self, value: u8) -> u8 {
+        let result = self.registers.a.wrapping_sub(value);
+        self.registers.f.zero = result == 0;
+        self.registers.f.subtract = true;
+        self.registers.f.half_carry = (self.registers.a & 0x0F) < (value & 0x0F);
+        self.registers.f.carry = self.registers.a < value;
+        result
+    }
+    
+    fn subtract_with_carry(&mut self, value: u8) -> u8 {
+        let carry = if self.registers.f.carry { 1 } else { 0 };
+        let temp = value.wrapping_add(carry);
+        let result = self.registers.a.wrapping_sub(temp);
+        
+        self.registers.f.zero = result == 0;
+        self.registers.f.subtract = true;
+        self.registers.f.half_carry = (self.registers.a & 0x0F) < ((value & 0x0F) + carry);
+        self.registers.f.carry = (self.registers.a as u16) < (value as u16 + carry as u16);
+        result
     }
     
     fn test_bit(&mut self, bit: u8, value: u8) {

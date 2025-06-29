@@ -41,6 +41,8 @@ pub enum InstructionKind {
     LD(ArgKind, ArgKind),
     NOP,
     ADD(ArgKind, ArgKind),
+    SUB(ArgKind, ArgKind),
+    SBC(ArgKind, ArgKind),
     INC(ArgKind),
     DEC(ArgKind),
     INC16(ArgKind),   // 16-bit increment
@@ -50,12 +52,14 @@ pub enum InstructionKind {
     CALL(u16), // address
     RET,
     HALT,
+    STOP,
     
     // Logical operations
     XOR(ArgKind, ArgKind),
     AND(ArgKind, ArgKind),
     OR(ArgKind, ArgKind),
     CP(ArgKind, ArgKind), // Compare
+    CP_MEM(ArgKind, ArgKind), // Compare with memory
     
     // Memory operations
     LD_MEM(ArgKind, ArgKind),        // LD (addr),reg
@@ -64,6 +68,7 @@ pub enum InstructionKind {
     LD_FROM_MEM(ArgKind, ArgKind),   // LD reg,(addr)
     LD_FROM_MEM_INC(ArgKind, ArgKind), // LD reg,(addr+)
     LD_FROM_MEM_DEC(ArgKind, ArgKind), // LD reg,(addr-)
+    LD_MEM_16(ArgKind, ArgKind),     // LD (nn),reg - 16-bit address
     
     // I/O operations
     LDH_TO_C(ArgKind),      // LD (C),A

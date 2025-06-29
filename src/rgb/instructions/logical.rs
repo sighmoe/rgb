@@ -1,6 +1,6 @@
 use super::{InstructionKind, ArgKind};
 
-pub fn decode_logical_instruction(opcode: u8) -> Option<InstructionKind> {
+pub fn decode_logical_instruction(opcode: u8, immediate: Option<u8>) -> Option<InstructionKind> {
     match opcode {
         // XOR instructions
         0xAF => Some(InstructionKind::XOR(ArgKind::A, ArgKind::A)), // XOR A,A
@@ -9,8 +9,9 @@ pub fn decode_logical_instruction(opcode: u8) -> Option<InstructionKind> {
         0xAA => Some(InstructionKind::XOR(ArgKind::A, ArgKind::D)), // XOR A,D
         0xAB => Some(InstructionKind::XOR(ArgKind::A, ArgKind::E)), // XOR A,E
         0xAC => Some(InstructionKind::XOR(ArgKind::A, ArgKind::H)), // XOR A,H
-        0xAD => Some(InstructionKind::XOR(ArgKind::A, ArgKind::L)), // XOR A,L
-        0xEE => Some(InstructionKind::XOR(ArgKind::A, ArgKind::Immediate(0))), // XOR A,d8
+        0xAD => Some(InstructionKind::XOR(ArgKind::A, ArgKind::L)), // XOR A,L  
+        0xAE => Some(InstructionKind::XOR(ArgKind::A, ArgKind::HL)), // XOR A,(HL)
+        0xEE => Some(InstructionKind::XOR(ArgKind::A, ArgKind::Immediate(immediate.unwrap_or(0)))), // XOR A,d8
         
         // AND instructions
         0xA7 => Some(InstructionKind::AND(ArgKind::A, ArgKind::A)), // AND A,A
@@ -20,7 +21,7 @@ pub fn decode_logical_instruction(opcode: u8) -> Option<InstructionKind> {
         0xA3 => Some(InstructionKind::AND(ArgKind::A, ArgKind::E)), // AND A,E
         0xA4 => Some(InstructionKind::AND(ArgKind::A, ArgKind::H)), // AND A,H
         0xA5 => Some(InstructionKind::AND(ArgKind::A, ArgKind::L)), // AND A,L
-        0xE6 => Some(InstructionKind::AND(ArgKind::A, ArgKind::Immediate(0))), // AND A,d8
+        0xE6 => Some(InstructionKind::AND(ArgKind::A, ArgKind::Immediate(immediate.unwrap_or(0)))), // AND A,d8
         
         // OR instructions
         0xB7 => Some(InstructionKind::OR(ArgKind::A, ArgKind::A)), // OR A,A
@@ -30,7 +31,8 @@ pub fn decode_logical_instruction(opcode: u8) -> Option<InstructionKind> {
         0xB3 => Some(InstructionKind::OR(ArgKind::A, ArgKind::E)), // OR A,E
         0xB4 => Some(InstructionKind::OR(ArgKind::A, ArgKind::H)), // OR A,H
         0xB5 => Some(InstructionKind::OR(ArgKind::A, ArgKind::L)), // OR A,L
-        0xF6 => Some(InstructionKind::OR(ArgKind::A, ArgKind::Immediate(0))), // OR A,d8
+        0xB6 => Some(InstructionKind::OR(ArgKind::A, ArgKind::HL)), // OR A,(HL)
+        0xF6 => Some(InstructionKind::OR(ArgKind::A, ArgKind::Immediate(immediate.unwrap_or(0)))), // OR A,d8
         
         // CP (Compare) instructions
         0xBF => Some(InstructionKind::CP(ArgKind::A, ArgKind::A)), // CP A,A
@@ -40,7 +42,8 @@ pub fn decode_logical_instruction(opcode: u8) -> Option<InstructionKind> {
         0xBB => Some(InstructionKind::CP(ArgKind::A, ArgKind::E)), // CP A,E
         0xBC => Some(InstructionKind::CP(ArgKind::A, ArgKind::H)), // CP A,H
         0xBD => Some(InstructionKind::CP(ArgKind::A, ArgKind::L)), // CP A,L
-        0xFE => Some(InstructionKind::CP(ArgKind::A, ArgKind::Immediate(0))), // CP A,d8
+        0xBE => Some(InstructionKind::CP_MEM(ArgKind::A, ArgKind::HL)), // CP A,(HL)
+        0xFE => Some(InstructionKind::CP(ArgKind::A, ArgKind::Immediate(immediate.unwrap_or(0)))), // CP A,d8
         
         _ => None,
     }
@@ -49,8 +52,8 @@ pub fn decode_logical_instruction(opcode: u8) -> Option<InstructionKind> {
 pub fn get_logical_instruction_size(opcode: u8) -> Option<u16> {
     match opcode {
         // Register to register operations (1 byte)
-        0xAF | 0xA8..=0xAD | 0xA7 | 0xA0..=0xA5 | 
-        0xB7 | 0xB0..=0xB5 | 0xBF | 0xB8..=0xBD => Some(1),
+        0xAF | 0xA8..=0xAE | 0xA7 | 0xA0..=0xA5 | 
+        0xB7 | 0xB0..=0xB6 | 0xBF | 0xB8..=0xBE => Some(1),
         
         // Immediate operations (2 bytes: opcode + immediate)
         0xEE | 0xE6 | 0xF6 | 0xFE => Some(2),
