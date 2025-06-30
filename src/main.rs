@@ -24,8 +24,14 @@ impl GameBoyEmulator {
         if self.cpu.check_interrupts() {
             let interrupt_cycles = self.cpu.handle_interrupt();
             if interrupt_cycles > 0 {
-                // Step PPU for interrupt handling cycles
-                self.cpu.mmap.step_ppu(interrupt_cycles as u16);
+                // Step PPU for interrupt handling cycles, checking for new interrupts
+                let (vblank_interrupt, stat_interrupt) = self.cpu.mmap.step_ppu(interrupt_cycles as u16);
+                if vblank_interrupt {
+                    self.cpu.request_vblank_interrupt();
+                }
+                if stat_interrupt {
+                    self.cpu.request_lcd_stat_interrupt();
+                }
                 return;
             }
         }
@@ -34,7 +40,26 @@ impl GameBoyEmulator {
             // Debug: Check if we're stuck in a loop
             static mut LAST_PC: u16 = 0;
             static mut STUCK_COUNT: u32 = 0;
+            static mut STEP_COUNT: u32 = 0;
             unsafe {
+                STEP_COUNT += 1;
+                
+                // Debug timer and interrupt registers periodically
+                if STEP_COUNT % 50000 == 0 {
+                    #[cfg(debug_assertions)]
+                    {
+                        use log::debug;
+                        let div = self.cpu.mmap.read(0xFF04);
+                        let tima = self.cpu.mmap.read(0xFF05);
+                        let tma = self.cpu.mmap.read(0xFF06);
+                        let tac = self.cpu.mmap.read(0xFF07);
+                        let ie = self.cpu.mmap.read(0xFFFF);
+                        let if_reg = self.cpu.mmap.read(0xFF0F);
+                        debug!("STEP {}: PC=0x{:04X}, DIV=0x{:02X}, TIMA=0x{:02X}, TMA=0x{:02X}, TAC=0x{:02X}, IE=0x{:02X}, IF=0x{:02X}, IME={}", 
+                            STEP_COUNT, self.cpu.pc, div, tima, tma, tac, ie, if_reg, self.cpu.ime);
+                    }
+                }
+                
                 if LAST_PC == self.cpu.pc {
                     STUCK_COUNT += 1;
                     if STUCK_COUNT > 100 {
@@ -74,9 +99,6 @@ impl GameBoyEmulator {
             
             // Handle EI delay after instruction execution
             self.cpu.handle_ei_delay();
-            
-            // Step PPU immediately after each instruction for proper timing
-            self.cpu.mmap.step_ppu(cycles as u16);
         }
     }
 
@@ -105,7 +127,7 @@ async fn main() {
         clear_background(GRAY);
 
         // Run emulator steps  
-        for _ in 0..10000 {  // Very fast execution for debugging
+        for _ in 0..50000 {  // Much faster execution for testing
             emulator.step();
             
             // Break if CPU is halted to prevent infinite loops

@@ -1,5 +1,6 @@
 use super::ppu::Ppu;
 use super::cart::Cart;
+use super::timer::Timer;
 use std::fs;
 use std::path::Path;
 use log::debug;
@@ -7,6 +8,7 @@ use log::debug;
 pub struct MemoryMap {
     contents: [u8; 65536],
     ppu: Ppu,
+    timer: Timer,
     cart: Option<Cart>,
     pub bootstrap_enabled: bool,
 }
@@ -16,6 +18,7 @@ impl MemoryMap {
         MemoryMap {
             contents: [0; 65536],
             ppu: Ppu::new(),
+            timer: Timer::new(),
             cart: None,
             bootstrap_enabled: true,
         }
@@ -34,6 +37,10 @@ impl MemoryMap {
                 if let Some(ref mut cart) = self.cart {
                     cart.write(addr, val);
                 }
+            }
+            // Timer Registers (0xFF04-0xFF07)
+            0xFF04..=0xFF07 => {
+                self.timer.write_register(addr, val);
             }
             // PPU Registers (0xFF40-0xFF4B)
             0xFF40..=0xFF4B => {
@@ -74,6 +81,17 @@ impl MemoryMap {
             }
             0xFFFF => {
                 // IE register - Interrupt Enable
+                #[cfg(debug_assertions)]
+                {
+                    use log::debug;
+                    static mut IE_WRITE_COUNT: u32 = 0;
+                    unsafe {
+                        IE_WRITE_COUNT += 1;
+                        if IE_WRITE_COUNT <= 10 {
+                            debug!("IE register write: value=0x{:02X}", val);
+                        }
+                    }
+                }
                 self.contents[addr as usize] = val;
             }
             // Regular memory
@@ -98,6 +116,8 @@ impl MemoryMap {
                     self.contents[addr as usize]
                 }
             }
+            // Timer Registers (0xFF04-0xFF07)
+            0xFF04..=0xFF07 => self.timer.read_register(addr),
             // PPU Registers (0xFF40-0xFF4B)
             0xFF40..=0xFF4B => self.ppu.read_register(addr),
             // VRAM (0x8000-0x9FFF)
@@ -182,7 +202,21 @@ impl MemoryMap {
         &mut self.ppu
     }
 
-    pub fn step_ppu(&mut self, cycles: u16) {
+    pub fn step_ppu(&mut self, cycles: u16) -> (bool, bool) {
         self.ppu.step(cycles);
+        
+        // Check for PPU interrupt flags and return them
+        let vblank_interrupt = self.ppu.vblank_interrupt;
+        let stat_interrupt = self.ppu.stat_interrupt;
+        
+        // Clear PPU interrupt flags after reading them
+        self.ppu.vblank_interrupt = false;
+        self.ppu.stat_interrupt = false;
+        
+        (vblank_interrupt, stat_interrupt)
+    }
+
+    pub fn step_timer(&mut self, cycles: u16) -> bool {
+        self.timer.step(cycles)
     }
 }

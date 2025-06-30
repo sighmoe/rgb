@@ -3,5 +3,7 @@ pub mod memory;
 pub mod registers;
 pub mod cart;
 pub mod ppu;
+pub mod timer;
 pub mod instructions;
 pub mod instruction_timing;
+pub mod execution;
