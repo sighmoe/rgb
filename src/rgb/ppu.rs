@@ -199,6 +199,32 @@ impl Ppu {
             stat_interrupt: false,
         }
     }
+    
+    /// Creates a new PPU in the post-boot state for skipping boot sequence
+    /// Initializes registers to their expected values after boot ROM completion
+    pub fn new_post_boot() -> Self {
+        Self {
+            vram: [0; VRAM_SIZE],
+            oam: [0; OAM_SIZE],
+            lcdc: LcdcFlags::from_byte(0x91), // LCD enabled, BG on, sprites on
+            stat: StatFlags::from_byte(0x00), // Mode 0 (H-Blank)
+            scy: 0,
+            scx: 0,
+            ly: 0,
+            lyc: 0,
+            wy: 0,
+            wx: 0,
+            bgp: 0xFC, // Background palette (11-11-11-00)
+            obp0: 0xFF, // Object palette 0 (all black)
+            obp1: 0xFF, // Object palette 1 (all black)
+            mode: PpuMode::HBlank, // Start in H-Blank mode
+            cycles: 0,
+            frame_buffer: [0; SCREEN_WIDTH * SCREEN_HEIGHT],
+            scanline_sprites: Vec::with_capacity(MAX_SPRITES_PER_LINE),
+            vblank_interrupt: false,
+            stat_interrupt: false,
+        }
+    }
 
     // Step PPU by CPU cycles - process all accumulated cycles
     pub fn step(&mut self, cycles: u16) {

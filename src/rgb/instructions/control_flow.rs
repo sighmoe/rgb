@@ -1,6 +1,6 @@
 use super::InstructionKind;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum JumpCondition {
     Always,
     Zero,

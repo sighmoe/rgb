@@ -24,6 +24,58 @@ impl MemoryMap {
         }
     }
     
+    /// Creates a new MemoryMap in the post-boot state for skipping boot sequence
+    /// This initializes hardware registers to their expected post-boot values
+    pub fn new_post_boot() -> Self {
+        let mut mmap = MemoryMap {
+            contents: [0; 65536],
+            ppu: Ppu::new_post_boot(),
+            timer: Timer::new_post_boot(),
+            cart: None,
+            bootstrap_enabled: false, // Bootstrap ROM already disabled
+        };
+        
+        // Set post-boot hardware register values
+        mmap.init_post_boot_registers();
+        
+        mmap
+    }
+    
+    /// Initialize hardware registers to their post-boot state
+    fn init_post_boot_registers(&mut self) {
+        // Sound registers (all disabled after boot)
+        self.contents[0xFF10] = 0x80; // NR10
+        self.contents[0xFF11] = 0xBF; // NR11
+        self.contents[0xFF12] = 0xF3; // NR12
+        self.contents[0xFF14] = 0xBF; // NR14
+        self.contents[0xFF16] = 0x3F; // NR21
+        self.contents[0xFF17] = 0x00; // NR22
+        self.contents[0xFF19] = 0xBF; // NR24
+        self.contents[0xFF1A] = 0x7F; // NR30
+        self.contents[0xFF1B] = 0xFF; // NR31
+        self.contents[0xFF1C] = 0x9F; // NR32
+        self.contents[0xFF1E] = 0xBF; // NR34
+        self.contents[0xFF20] = 0xFF; // NR41
+        self.contents[0xFF21] = 0x00; // NR42
+        self.contents[0xFF22] = 0x00; // NR43
+        self.contents[0xFF23] = 0xBF; // NR44
+        self.contents[0xFF24] = 0x77; // NR50
+        self.contents[0xFF25] = 0xF3; // NR51
+        self.contents[0xFF26] = 0xF1; // NR52
+        
+        // Interrupt registers (disabled after boot)
+        self.contents[0xFF0F] = 0xE0; // IF - no interrupts pending
+        self.contents[0xFFFF] = 0x00; // IE - all interrupts disabled
+        
+        // Bootstrap disable register (already disabled)
+        self.contents[0xFF50] = 0x01; // Bootstrap ROM disabled
+    }
+    
+    /// Disables the bootstrap ROM, allowing cartridge access to 0x0000-0x00FF
+    pub fn disable_bootstrap(&mut self) {
+        self.bootstrap_enabled = false;
+    }
+    
     pub fn load_cartridge(&mut self, path: &Path) {
         let cart = Cart::new(path);
         println!("Cartridge loaded: {}", cart.get_title());

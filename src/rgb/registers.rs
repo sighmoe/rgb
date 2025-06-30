@@ -66,6 +66,27 @@ impl Registers {
             l: 0,
         }
     }
+
+    /// Creates registers in the post-boot state for DMG (original Game Boy)
+    /// These values match what the boot ROM sets before handing control to the cartridge
+    pub fn new_post_boot() -> Self {
+        let flags = FlagsRegister {
+            zero: true,        // Z=1
+            subtract: false,   // N=0  
+            half_carry: true,  // H=1
+            carry: true,       // C=1 (F register = 0xB0)
+        };
+        Registers {
+            a: 0x01,  // Indicates DMG hardware
+            b: 0x00,
+            c: 0x13,
+            d: 0x00,
+            e: 0xD8,
+            f: flags,
+            h: 0x01,
+            l: 0x4D,
+        }
+    }
     pub fn get_af(&self) -> u16 {
         (self.a as u16) << 8 | u8::from(self.f) as u16
     }

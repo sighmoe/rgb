@@ -53,6 +53,25 @@ impl Cpu {
         }
     }
 
+    /// Creates a new CPU in the state that would exist after the boot ROM completes
+    /// This allows skipping the boot sequence and starting directly with cartridge execution
+    #[allow(dead_code)] // Public API method
+    pub fn new_post_boot() -> Self {
+        let registers = Registers::new_post_boot();
+        let mmap = MemoryMap::new_post_boot();
+
+        Cpu {
+            registers,
+            pc: 0x0100,     // Cartridge entry point
+            sp: 0xFFFE,     // Stack pointer at top of RAM
+            mmap,
+            halted: false,
+            ime: false,     // Interrupts disabled after boot
+            ei_delay: false,
+            halt_bug: false,
+        }
+    }
+
     pub fn decode(&mut self) -> Instruction {
         let opcode = self.mmap.read(self.pc);
         let mut instruction = Instruction::default();
@@ -102,6 +121,7 @@ impl Cpu {
     }
 
     pub fn execute(&mut self, instruction: Instruction) -> u8 {
+        
         // Calculate cycles for conditional instructions before moving the instruction
         let condition_taken = match &instruction.kind {
             InstructionKind::JP(condition, _) => {

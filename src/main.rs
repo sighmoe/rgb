@@ -8,13 +8,25 @@ struct GameBoyEmulator {
 }
 
 impl GameBoyEmulator {
-    fn new(rom_path: &str) -> Self {
-        let mut cpu = Cpu::new();
+    fn new(rom_path: &str, skip_boot_rom: bool) -> Self {
+        let mut cpu = if skip_boot_rom {
+            Cpu::new_post_boot()
+        } else {
+            Cpu::new()
+        };
+        
         // Load cartridge from provided path
         cpu.mmap.load_cartridge(std::path::Path::new(rom_path));
-        // Set initial state for Game Boy
-        cpu.pc = 0x0000;  // Start at bootstrap ROM
-        cpu.sp = 0xFFFE;  // Initial stack pointer
+        
+        if skip_boot_rom {
+            // Disable bootstrap ROM and start at cartridge entry point
+            cpu.mmap.disable_bootstrap();
+            cpu.pc = 0x0100;  // Cartridge entry point
+        } else {
+            // Set initial state for Game Boy boot sequence
+            cpu.pc = 0x0000;  // Start at bootstrap ROM
+            cpu.sp = 0xFFFE;  // Initial stack pointer
+        }
         
         Self { cpu }
     }
@@ -35,6 +47,29 @@ impl GameBoyEmulator {
                 return;
             }
         }
+        
+        // If CPU is halted, still need to step timer and PPU to generate interrupts
+        if self.cpu.halted {
+            // When halted, advance 4 cycles (1 M-cycle) to keep timer/PPU running
+            let halt_cycles = 4u16;
+            
+            // Step timer and check for timer interrupt
+            if self.cpu.mmap.step_timer(halt_cycles) {
+                self.cpu.request_timer_interrupt();
+            }
+            
+            // Step PPU and check for PPU interrupts
+            let (vblank_interrupt, stat_interrupt) = self.cpu.mmap.step_ppu(halt_cycles);
+            if vblank_interrupt {
+                self.cpu.request_vblank_interrupt();
+            }
+            if stat_interrupt {
+                self.cpu.request_lcd_stat_interrupt();
+            }
+            
+            return;
+        }
+        
         
         if !self.cpu.halted {
             // Debug: Check if we're stuck in a loop
@@ -113,15 +148,42 @@ async fn main() {
     #[cfg(debug_assertions)]
     env_logger::init();
     
-    // Get ROM path from command line arguments
+    // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
-    let rom_path = if args.len() > 1 {
-        &args[1]
-    } else {
-        "./test-roms/pkmn.gb" // Default ROM if no argument provided
-    };
+    let mut rom_path = "./test-roms/pkmn.gb"; // Default ROM if no argument provided
+    let mut skip_boot_rom = false;
     
-    let mut emulator = GameBoyEmulator::new(rom_path);
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--skip-boot" | "-s" => {
+                skip_boot_rom = true;
+                i += 1;
+            }
+            "--help" | "-h" => {
+                println!("Game Boy Emulator");
+                println!("Usage: {} [options] [rom_path]", args[0]);
+                println!();
+                println!("Options:");
+                println!("  --skip-boot, -s    Skip the Game Boy boot sequence and start directly with the ROM");
+                println!("  --help, -h         Show this help message");
+                println!();
+                println!("If no ROM path is provided, defaults to './test-roms/pkmn.gb'");
+                return;
+            }
+            arg if !arg.starts_with("--") => {
+                rom_path = arg;
+                i += 1;
+            }
+            _ => {
+                eprintln!("Unknown option: {}", args[i]);
+                eprintln!("Use --help for usage information");
+                return;
+            }
+        }
+    }
+    
+    let mut emulator = GameBoyEmulator::new(rom_path, skip_boot_rom);
     
     loop {
         clear_background(GRAY);
@@ -152,15 +214,6 @@ async fn main() {
                     use log::debug;
                     if ly_value == 144 {
                         debug!("*** LY REACHED 144! PC: 0x{:04X}, A: 0x{:02X} ***", emulator.cpu.pc, emulator.cpu.registers.a);
-                    }
-                    if emulator.cpu.registers.e == 0 || emulator.cpu.pc >= 0x70 {
-                        debug!("*** TIMING COMPLETE! PC: 0x{:04X}, A: 0x{:02X}, C: 0x{:02X}, E: 0x{:02X}, LY: {} ***", 
-                            emulator.cpu.pc, 
-                            emulator.cpu.registers.a,
-                            emulator.cpu.registers.c,
-                            emulator.cpu.registers.e,
-                            ly_value
-                        );
                     }
                     debug!("PC: 0x{:04X}, A: 0x{:02X}, C: 0x{:02X}, E: 0x{:02X}, LY: {}, Bootstrap: {}", 
                         emulator.cpu.pc, 
