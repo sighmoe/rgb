@@ -1,46 +1,83 @@
 mod rgb;
 
 use macroquad::prelude::*;
-use rgb::{cpu::Cpu, memory::MemoryMap, registers::Registers};
+use rgb::cpu::Cpu;
 
 struct GameBoyEmulator {
     cpu: Cpu,
 }
 
 impl GameBoyEmulator {
-    fn new() -> Self {
-        let mut mmap = MemoryMap::new();
-        // Load bootstrap ROM
-        mmap.load_bootstrap();
+    fn new(rom_path: &str) -> Self {
+        let mut cpu = Cpu::new();
+        // Load cartridge from provided path
+        cpu.mmap.load_cartridge(std::path::Path::new(rom_path));
+        // Set initial state for Game Boy
+        cpu.pc = 0x0000;  // Start at bootstrap ROM
+        cpu.sp = 0xFFFE;  // Initial stack pointer
         
-        Self {
-            cpu: Cpu {
-                registers: Registers::new(),
-                pc: 0x0000,  // Start at bootstrap ROM
-                sp: 0xFFFE,  // Initial stack pointer
-                mmap,
-                halted: false,
-            }
-        }
+        Self { cpu }
     }
 
     fn step(&mut self) {
-        if !self.cpu.halted {
-            // Try to execute instruction, but don't crash on unknown opcodes
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let instruction = self.cpu.decode();
-                self.cpu.execute(instruction);
-            })) {
-                Ok(()) => {}, // Instruction executed successfully
-                Err(_) => {
-                    // Unknown opcode, just increment PC and continue
-                    self.cpu.pc = self.cpu.pc.wrapping_add(1);
-                }
+        // Handle interrupts first (even when halted, interrupts can wake CPU)
+        if self.cpu.check_interrupts() {
+            let interrupt_cycles = self.cpu.handle_interrupt();
+            if interrupt_cycles > 0 {
+                // Step PPU for interrupt handling cycles
+                self.cpu.mmap.step_ppu(interrupt_cycles as u16);
+                return;
             }
         }
         
-        // Step PPU with CPU cycles (simplified: assume 4 cycles per instruction)
-        self.cpu.mmap.step_ppu(4);
+        if !self.cpu.halted {
+            // Debug: Check if we're stuck in a loop
+            static mut LAST_PC: u16 = 0;
+            static mut STUCK_COUNT: u32 = 0;
+            unsafe {
+                if LAST_PC == self.cpu.pc {
+                    STUCK_COUNT += 1;
+                    if STUCK_COUNT > 100 {
+                        #[cfg(debug_assertions)]
+                        {
+                            use log::debug;
+                            if self.cpu.pc == 0x00E9 {
+                                let hl = self.cpu.registers.get_hl();
+                                let de = self.cpu.registers.get_de();
+                                let mem_val = self.cpu.mmap.read(hl);
+                                debug!("BOOTSTRAP LOGO VERIFICATION LOOP:");
+                                debug!("  PC: 0x{:04X}, A: 0x{:02X}, HL: 0x{:04X}, DE: 0x{:04X}", 
+                                    self.cpu.pc, self.cpu.registers.a, hl, de);
+                                debug!("  Memory at (HL): 0x{:02X}, Zero flag: {}", 
+                                    mem_val, self.cpu.registers.f.zero);
+                                debug!("  Expected comparison: A(0x{:02X}) vs (HL)(0x{:02X})", 
+                                    self.cpu.registers.a, mem_val);
+                                debug!("  DE should be in range 0x00A8-0x00D7, current offset: 0x{:02X}", 
+                                    de.wrapping_sub(0x00A8));
+                            } else {
+                                debug!("STUCK at PC: 0x{:04X}, instruction: 0x{:02X}", 
+                                    self.cpu.pc, 
+                                    self.cpu.mmap.read(self.cpu.pc)
+                                );
+                            }
+                        }
+                        STUCK_COUNT = 0;
+                    }
+                } else {
+                    STUCK_COUNT = 0;
+                }
+                LAST_PC = self.cpu.pc;
+            }
+            
+            let instruction = self.cpu.decode();
+            let cycles = self.cpu.execute(instruction);
+            
+            // Handle EI delay after instruction execution
+            self.cpu.handle_ei_delay();
+            
+            // Step PPU immediately after each instruction for proper timing
+            self.cpu.mmap.step_ppu(cycles as u16);
+        }
     }
 
     fn get_frame_buffer(&self) -> &[u8] {
@@ -50,19 +87,129 @@ impl GameBoyEmulator {
 
 #[macroquad::main("Game Boy Emulator")]
 async fn main() {
-    let mut emulator = GameBoyEmulator::new();
+    // Initialize logger (only in debug builds)
+    #[cfg(debug_assertions)]
+    env_logger::init();
+    
+    // Get ROM path from command line arguments
+    let args: Vec<String> = std::env::args().collect();
+    let rom_path = if args.len() > 1 {
+        &args[1]
+    } else {
+        "./test-roms/pkmn.gb" // Default ROM if no argument provided
+    };
+    
+    let mut emulator = GameBoyEmulator::new(rom_path);
     
     loop {
-        clear_background(BLACK);
+        clear_background(GRAY);
 
-        // Run emulator steps
-        for _ in 0..1000 {  // Run multiple steps per frame
+        // Run emulator steps  
+        for _ in 0..10000 {  // Very fast execution for debugging
             emulator.step();
+            
+            // Break if CPU is halted to prevent infinite loops
+            if emulator.cpu.halted {
+                break;
+            }
         }
-
+        
+        // Remove test pattern to see actual bootstrap ROM output
+        
         // Get frame buffer from PPU
         let frame_buffer = emulator.get_frame_buffer();
         
+        // Debug: Print some state occasionally
+        static mut FRAME_COUNTER: u32 = 0;
+        unsafe {
+            FRAME_COUNTER += 1;
+            if FRAME_COUNTER % 30 == 0 {  // Print more frequently with faster speed
+                let ly_value = emulator.cpu.mmap.read(0xFF44);
+                #[cfg(debug_assertions)]
+                {
+                    use log::debug;
+                    if ly_value == 144 {
+                        debug!("*** LY REACHED 144! PC: 0x{:04X}, A: 0x{:02X} ***", emulator.cpu.pc, emulator.cpu.registers.a);
+                    }
+                    if emulator.cpu.registers.e == 0 || emulator.cpu.pc >= 0x70 {
+                        debug!("*** TIMING COMPLETE! PC: 0x{:04X}, A: 0x{:02X}, C: 0x{:02X}, E: 0x{:02X}, LY: {} ***", 
+                            emulator.cpu.pc, 
+                            emulator.cpu.registers.a,
+                            emulator.cpu.registers.c,
+                            emulator.cpu.registers.e,
+                            ly_value
+                        );
+                    }
+                    debug!("PC: 0x{:04X}, A: 0x{:02X}, C: 0x{:02X}, E: 0x{:02X}, LY: {}, Bootstrap: {}", 
+                        emulator.cpu.pc, 
+                        emulator.cpu.registers.a,
+                        emulator.cpu.registers.c,
+                        emulator.cpu.registers.e,
+                        ly_value,
+                        if emulator.cpu.pc < 0x0100 { "ON" } else { "OFF" }
+                    );
+                }
+            }
+            
+            #[cfg(debug_assertions)]
+            {
+                use log::debug;
+                // Debug when entering logo verification
+                if emulator.cpu.pc == 0x00E0 {
+                    let hl = emulator.cpu.registers.get_hl();
+                    let de = emulator.cpu.registers.get_de();
+                    debug!("ENTERING LOGO VERIFICATION: HL=0x{:04X}, DE=0x{:04X}", hl, de);
+                }
+                
+                // Debug PPU state during bootstrap logo rendering
+                if emulator.cpu.pc >= 0x0070 && emulator.cpu.pc < 0x00E0 && FRAME_COUNTER % 60 == 0 {
+                    let lcdc = emulator.cpu.mmap.read(0xFF40);
+                    let bgp = emulator.cpu.mmap.read(0xFF47);
+                    let scy = emulator.cpu.mmap.read(0xFF42);
+                    let scx = emulator.cpu.mmap.read(0xFF43);
+                    debug!("PPU DEBUG: LCDC=0x{:02X} (bg_window_tiles={}), BGP=0x{:02X}, SCY={}, SCX={}", 
+                        lcdc, (lcdc & 0x10) != 0, bgp, scy, scx);
+                }
+            }
+        }
+        
+        // Debug logging (only in debug builds)
+        #[cfg(debug_assertions)]
+        unsafe {
+            if FRAME_COUNTER % 30 == 0 && (emulator.cpu.pc >= 0x0060 || !emulator.cpu.mmap.bootstrap_enabled) {
+                use log::debug;
+                debug!("=== NINTENDO LOGO ANALYSIS ===");
+                let frame_buffer = emulator.get_frame_buffer();
+                
+                // Print the actual logo area with better contrast
+                for debug_y in 64..80 {
+                    let mut line = String::new();
+                    for debug_x in 32..128 {
+                        let pixel = frame_buffer[debug_y * 160 + debug_x];
+                        let char = match pixel {
+                            0 => ' ',  // White (background)
+                            1 => '.',  // Light gray
+                            2 => '#',  // Dark gray
+                            3 => '█',  // Black (logo)
+                            _ => '?',  // Error
+                        };
+                        line.push(char);
+                    }
+                    debug!("Y{:02}: {}", debug_y, line);
+                }
+                
+                // Debug tile addressing mode issue
+                let lcdc = emulator.cpu.mmap.read(0xFF40);
+                let bg_window_tiles = (lcdc & 0x10) != 0;
+                debug!("LCDC: 0x{:02X}, bg_window_tiles: {} ({})", 
+                    lcdc, bg_window_tiles,
+                    if bg_window_tiles { "unsigned 0x8000-0x8FFF" } else { "signed 0x8800-0x97FF base 0x9000" }
+                );
+                
+                debug!("=== END NINTENDO LOGO ANALYSIS ===");
+            }
+        }
+
         // Draw the Game Boy screen (160x144)
         let scale = 4.0;
         for y in 0..144 {

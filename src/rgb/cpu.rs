@@ -3,12 +3,33 @@ use crate::rgb::instruction_timing::get_instruction_cycles;
 use crate::rgb::memory::MemoryMap;
 use crate::rgb::registers::Registers;
 
+// Interrupt vector addresses
+const VBLANK_VECTOR: u16 = 0x0040;
+const LCD_STAT_VECTOR: u16 = 0x0048;
+const TIMER_VECTOR: u16 = 0x0050;
+const SERIAL_VECTOR: u16 = 0x0058;
+const JOYPAD_VECTOR: u16 = 0x0060;
+
+// Interrupt register addresses
+const IE_REGISTER: u16 = 0xFFFF;  // Interrupt Enable
+const IF_REGISTER: u16 = 0xFF0F;  // Interrupt Flag
+
+// Interrupt bit positions
+const VBLANK_BIT: u8 = 0;
+const LCD_STAT_BIT: u8 = 1;
+const TIMER_BIT: u8 = 2;
+const SERIAL_BIT: u8 = 3;
+const JOYPAD_BIT: u8 = 4;
+
 pub struct Cpu {
     pub registers: Registers,
     pub pc: u16,
     pub sp: u16,
     pub mmap: MemoryMap,
     pub halted: bool,
+    // Interrupt handling
+    pub ime: bool,        // Interrupt Master Enable
+    pub ei_delay: bool,   // EI instruction has 1-instruction delay
 }
 
 impl Cpu {
@@ -24,6 +45,8 @@ impl Cpu {
             sp: 0,
             mmap,
             halted: false,
+            ime: false,      // Interrupts disabled on startup
+            ei_delay: false, // No EI delay initially
         }
     }
 
@@ -257,8 +280,41 @@ impl Cpu {
                     (ArgKind::L, ArgKind::L) => {
                         self.registers.l = self.registers.l;
                     }
+                    // Special case: LD SP,HL
+                    (ArgKind::SP, ArgKind::HL) => {
+                        self.sp = self.registers.get_hl();
+                    }
                     _ => panic!("Unsupported LD instruction variant"),
                 }
+            }
+            InstructionKind::LDHL_SP_R8(offset) => {
+                // LD HL,SP+r8 - Load HL with SP plus signed 8-bit offset
+                let sp_value = self.sp as i32;
+                let offset_value = offset as i32;
+                let result = sp_value.wrapping_add(offset_value) as u16;
+                
+                // Set flags based on 8-bit arithmetic (lower byte only)
+                let sp_low = (self.sp & 0xFF) as u8;
+                let offset_u8 = offset as u8;
+                
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                // Half carry is set if there's a carry from bit 3 to bit 4
+                self.registers.f.half_carry = (sp_low & 0x0F) + (offset_u8 & 0x0F) > 0x0F;
+                // Carry is set if there's a carry from bit 7 to bit 8
+                self.registers.f.carry = (sp_low as u16) + (offset_u8 as u16) > 0xFF;
+                
+                self.registers.set_hl(result);
+            }
+            
+            InstructionKind::LD_SP_TO_MEM(address) => {
+                // LD (nn),SP - Store SP at 16-bit address (little-endian)
+                let sp_low = (self.sp & 0xFF) as u8;
+                let sp_high = ((self.sp >> 8) & 0xFF) as u8;
+                
+                // Store SP in little-endian format (low byte first, then high byte)
+                self.mmap.write(address, sp_low);
+                self.mmap.write(address.wrapping_add(1), sp_high);
             }
             InstructionKind::ADD(dest, src) => {
                 match (dest, src) {
@@ -564,12 +620,88 @@ impl Cpu {
                     self.pc = self.pop_stack();
                 }
             }
+            InstructionKind::RETI => {
+                // Return from interrupt: pop PC from stack and enable interrupts
+                self.pc = self.pop_stack();
+                // Enable interrupts immediately (no delay like EI)
+                self.ime = true;
+            }
             InstructionKind::HALT => {
                 self.halted = true;
             }
             InstructionKind::STOP => {
                 // STOP instruction - similar to HALT but stops CPU and LCD
                 self.halted = true;
+            }
+            
+            InstructionKind::DAA => {
+                // Decimal Adjust Accumulator - adjusts A for BCD arithmetic
+                let mut a = self.registers.a;
+                let mut correction = 0;
+                let mut carry = false;
+                
+                if self.registers.f.half_carry || (!self.registers.f.subtract && (a & 0x0F) > 0x09) {
+                    correction |= 0x06;
+                }
+                
+                if self.registers.f.carry || (!self.registers.f.subtract && a > 0x99) {
+                    correction |= 0x60;
+                    carry = true;
+                }
+                
+                if self.registers.f.subtract {
+                    a = a.wrapping_sub(correction);
+                } else {
+                    a = a.wrapping_add(correction);
+                }
+                
+                self.registers.a = a;
+                self.registers.f.zero = a == 0;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = carry;
+                // Subtract flag is preserved
+            }
+            
+            InstructionKind::RLCA => {
+                // Rotate A left circular
+                let carry = (self.registers.a & 0x80) != 0;
+                self.registers.a = (self.registers.a << 1) | (if carry { 1 } else { 0 });
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = carry;
+            }
+            
+            InstructionKind::RRCA => {
+                // Rotate A right circular
+                let carry = (self.registers.a & 0x01) != 0;
+                self.registers.a = (self.registers.a >> 1) | (if carry { 0x80 } else { 0 });
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = carry;
+            }
+            
+            InstructionKind::RLA => {
+                // Rotate A left through carry
+                let old_carry = self.registers.f.carry;
+                let new_carry = (self.registers.a & 0x80) != 0;
+                self.registers.a = (self.registers.a << 1) | (if old_carry { 1 } else { 0 });
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = new_carry;
+            }
+            
+            InstructionKind::RRA => {
+                // Rotate A right through carry
+                let old_carry = self.registers.f.carry;
+                let new_carry = (self.registers.a & 0x01) != 0;
+                self.registers.a = (self.registers.a >> 1) | (if old_carry { 0x80 } else { 0 });
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = new_carry;
             }
             
             // Logical operations
@@ -828,12 +960,13 @@ impl Cpu {
             
             // Interrupt control
             InstructionKind::EI => {
-                // Enable interrupts (simplified implementation)
-                // In a full emulator, this would set the interrupt master enable flag
+                // Enable interrupts after next instruction (1-instruction delay)
+                self.ei_delay = true;
             }
             InstructionKind::DI => {
-                // Disable interrupts (simplified implementation)
-                // In a full emulator, this would clear the interrupt master enable flag
+                // Disable interrupts immediately
+                self.ime = false;
+                self.ei_delay = false; // Cancel any pending EI
             }
             
             // Stack operations
@@ -924,27 +1057,6 @@ impl Cpu {
                 }
             }
             
-            // Special accumulator rotate instructions
-            InstructionKind::RLA => {
-                let carry_bit = if self.registers.f.carry { 1 } else { 0 };
-                let new_carry = (self.registers.a & 0x80) != 0;
-                self.registers.a = (self.registers.a << 1) | carry_bit;
-                
-                self.registers.f.zero = false; // RLA always clears zero flag
-                self.registers.f.subtract = false;
-                self.registers.f.half_carry = false;
-                self.registers.f.carry = new_carry;
-            }
-            InstructionKind::RRA => {
-                let carry_bit = if self.registers.f.carry { 0x80 } else { 0 };
-                let new_carry = (self.registers.a & 0x01) != 0;
-                self.registers.a = (self.registers.a >> 1) | carry_bit;
-                
-                self.registers.f.zero = false; // RRA always clears zero flag
-                self.registers.f.subtract = false;
-                self.registers.f.half_carry = false;
-                self.registers.f.carry = new_carry;
-            }
             
             // ADC - Add with carry
             InstructionKind::ADC(dest, src) => {
@@ -1127,6 +1239,37 @@ impl Cpu {
                     _ => {}
                 }
             }
+            
+            InstructionKind::SWAP(reg) => {
+                let value = match reg {
+                    ArgKind::A => self.registers.a,
+                    ArgKind::B => self.registers.b,
+                    ArgKind::C => self.registers.c,
+                    ArgKind::D => self.registers.d,
+                    ArgKind::E => self.registers.e,
+                    ArgKind::H => self.registers.h,
+                    ArgKind::L => self.registers.l,
+                    _ => panic!("Invalid SWAP register"),
+                };
+                
+                // Swap upper and lower nibbles
+                let new_value = ((value & 0x0F) << 4) | ((value & 0xF0) >> 4);
+                self.registers.f.zero = new_value == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = false;
+                
+                match reg {
+                    ArgKind::A => self.registers.a = new_value,
+                    ArgKind::B => self.registers.b = new_value,
+                    ArgKind::C => self.registers.c = new_value,
+                    ArgKind::D => self.registers.d = new_value,
+                    ArgKind::E => self.registers.e = new_value,
+                    ArgKind::H => self.registers.h = new_value,
+                    ArgKind::L => self.registers.l = new_value,
+                    _ => {}
+                }
+            }
         }
         
         // Calculate cycles for this instruction
@@ -1248,6 +1391,107 @@ impl Cpu {
         let high = self.mmap.read(self.sp) as u16;
         self.sp = self.sp.wrapping_add(1);
         (high << 8) | low
+    }
+    
+    // Interrupt handling methods
+    pub fn check_interrupts(&mut self) -> bool {
+        if !self.ime {
+            return false;
+        }
+        
+        let ie = self.mmap.read(IE_REGISTER);
+        let if_reg = self.mmap.read(IF_REGISTER);
+        let pending = ie & if_reg & 0x1F; // Only check lower 5 bits
+        
+        pending != 0
+    }
+    
+    pub fn handle_interrupt(&mut self) -> u8 {
+        if !self.ime {
+            return 0;
+        }
+        
+        let ie = self.mmap.read(IE_REGISTER);
+        let if_reg = self.mmap.read(IF_REGISTER);
+        let pending = ie & if_reg & 0x1F;
+        
+        if pending == 0 {
+            return 0;
+        }
+        
+        // Find highest priority interrupt (lowest bit number)
+        let interrupt_bit = if pending & (1 << VBLANK_BIT) != 0 {
+            VBLANK_BIT
+        } else if pending & (1 << LCD_STAT_BIT) != 0 {
+            LCD_STAT_BIT
+        } else if pending & (1 << TIMER_BIT) != 0 {
+            TIMER_BIT
+        } else if pending & (1 << SERIAL_BIT) != 0 {
+            SERIAL_BIT
+        } else if pending & (1 << JOYPAD_BIT) != 0 {
+            JOYPAD_BIT
+        } else {
+            return 0; // No interrupt found
+        };
+        
+        // Clear the interrupt flag
+        let new_if = if_reg & !(1 << interrupt_bit);
+        self.mmap.write(IF_REGISTER, new_if);
+        
+        // Disable interrupts
+        self.ime = false;
+        
+        // Wake up from HALT if halted
+        self.halted = false;
+        
+        // Push current PC to stack (takes 2 cycles)
+        self.push_stack(self.pc);
+        
+        // Jump to interrupt vector
+        self.pc = match interrupt_bit {
+            VBLANK_BIT => VBLANK_VECTOR,
+            LCD_STAT_BIT => LCD_STAT_VECTOR,
+            TIMER_BIT => TIMER_VECTOR,
+            SERIAL_BIT => SERIAL_VECTOR,
+            JOYPAD_BIT => JOYPAD_VECTOR,
+            _ => unreachable!(),
+        };
+        
+        // Interrupt handling takes 5 M-cycles (20 T-cycles)
+        20
+    }
+    
+    pub fn request_interrupt(&mut self, interrupt_bit: u8) {
+        let if_reg = self.mmap.read(IF_REGISTER);
+        self.mmap.write(IF_REGISTER, if_reg | (1 << interrupt_bit));
+    }
+    
+    // Helper methods for requesting specific interrupts
+    pub fn request_vblank_interrupt(&mut self) {
+        self.request_interrupt(VBLANK_BIT);
+    }
+    
+    pub fn request_lcd_stat_interrupt(&mut self) {
+        self.request_interrupt(LCD_STAT_BIT);
+    }
+    
+    pub fn request_timer_interrupt(&mut self) {
+        self.request_interrupt(TIMER_BIT);
+    }
+    
+    pub fn request_serial_interrupt(&mut self) {
+        self.request_interrupt(SERIAL_BIT);
+    }
+    
+    pub fn request_joypad_interrupt(&mut self) {
+        self.request_interrupt(JOYPAD_BIT);
+    }
+    
+    pub fn handle_ei_delay(&mut self) {
+        if self.ei_delay {
+            self.ime = true;
+            self.ei_delay = false;
+        }
     }
 }
 

@@ -3,6 +3,24 @@ use super::{InstructionKind, ArgKind};
 pub fn decode_bit_instruction(opcode: u16) -> Option<InstructionKind> {
     // CB-prefixed instructions are 16-bit opcodes (0xCBxx)
     match opcode {
+        // Rotate left circular (RLC)
+        0xCB00 => Some(InstructionKind::RLC(ArgKind::B)),
+        0xCB01 => Some(InstructionKind::RLC(ArgKind::C)),
+        0xCB02 => Some(InstructionKind::RLC(ArgKind::D)),
+        0xCB03 => Some(InstructionKind::RLC(ArgKind::E)),
+        0xCB04 => Some(InstructionKind::RLC(ArgKind::H)),
+        0xCB05 => Some(InstructionKind::RLC(ArgKind::L)),
+        0xCB07 => Some(InstructionKind::RLC(ArgKind::A)),
+        
+        // Rotate right circular (RRC)
+        0xCB08 => Some(InstructionKind::RRC(ArgKind::B)),
+        0xCB09 => Some(InstructionKind::RRC(ArgKind::C)),
+        0xCB0A => Some(InstructionKind::RRC(ArgKind::D)),
+        0xCB0B => Some(InstructionKind::RRC(ArgKind::E)),
+        0xCB0C => Some(InstructionKind::RRC(ArgKind::H)),
+        0xCB0D => Some(InstructionKind::RRC(ArgKind::L)),
+        0xCB0F => Some(InstructionKind::RRC(ArgKind::A)),
+        
         // Rotate left through carry (RL)
         0xCB10 => Some(InstructionKind::RL(ArgKind::B)),
         0xCB11 => Some(InstructionKind::RL(ArgKind::C)),
@@ -20,6 +38,42 @@ pub fn decode_bit_instruction(opcode: u16) -> Option<InstructionKind> {
         0xCB1C => Some(InstructionKind::RR(ArgKind::H)),
         0xCB1D => Some(InstructionKind::RR(ArgKind::L)),
         0xCB1F => Some(InstructionKind::RR(ArgKind::A)),
+        
+        // Shift left arithmetic (SLA)
+        0xCB20 => Some(InstructionKind::SLA(ArgKind::B)),
+        0xCB21 => Some(InstructionKind::SLA(ArgKind::C)),
+        0xCB22 => Some(InstructionKind::SLA(ArgKind::D)),
+        0xCB23 => Some(InstructionKind::SLA(ArgKind::E)),
+        0xCB24 => Some(InstructionKind::SLA(ArgKind::H)),
+        0xCB25 => Some(InstructionKind::SLA(ArgKind::L)),
+        0xCB27 => Some(InstructionKind::SLA(ArgKind::A)),
+        
+        // Shift right arithmetic (SRA)
+        0xCB28 => Some(InstructionKind::SRA(ArgKind::B)),
+        0xCB29 => Some(InstructionKind::SRA(ArgKind::C)),
+        0xCB2A => Some(InstructionKind::SRA(ArgKind::D)),
+        0xCB2B => Some(InstructionKind::SRA(ArgKind::E)),
+        0xCB2C => Some(InstructionKind::SRA(ArgKind::H)),
+        0xCB2D => Some(InstructionKind::SRA(ArgKind::L)),
+        0xCB2F => Some(InstructionKind::SRA(ArgKind::A)),
+        
+        // Swap upper and lower nibbles (SWAP)
+        0xCB30 => Some(InstructionKind::SWAP(ArgKind::B)),
+        0xCB31 => Some(InstructionKind::SWAP(ArgKind::C)),
+        0xCB32 => Some(InstructionKind::SWAP(ArgKind::D)),
+        0xCB33 => Some(InstructionKind::SWAP(ArgKind::E)),
+        0xCB34 => Some(InstructionKind::SWAP(ArgKind::H)),
+        0xCB35 => Some(InstructionKind::SWAP(ArgKind::L)),
+        0xCB37 => Some(InstructionKind::SWAP(ArgKind::A)),
+        
+        // Shift right logical (SRL)
+        0xCB38 => Some(InstructionKind::SRL(ArgKind::B)),
+        0xCB39 => Some(InstructionKind::SRL(ArgKind::C)),
+        0xCB3A => Some(InstructionKind::SRL(ArgKind::D)),
+        0xCB3B => Some(InstructionKind::SRL(ArgKind::E)),
+        0xCB3C => Some(InstructionKind::SRL(ArgKind::H)),
+        0xCB3D => Some(InstructionKind::SRL(ArgKind::L)),
+        0xCB3F => Some(InstructionKind::SRL(ArgKind::A)),
         // BIT 0, r
         0xCB40 => Some(InstructionKind::BIT(0, ArgKind::B)),
         0xCB41 => Some(InstructionKind::BIT(0, ArgKind::C)),
@@ -92,15 +146,88 @@ pub fn decode_bit_instruction(opcode: u16) -> Option<InstructionKind> {
         0xCB7D => Some(InstructionKind::BIT(7, ArgKind::L)),
         0xCB7F => Some(InstructionKind::BIT(7, ArgKind::A)),
         
+        // RES 0, r (reset bit 0)
+        0xCB80 => Some(InstructionKind::RES(0, ArgKind::B)),
+        0xCB81 => Some(InstructionKind::RES(0, ArgKind::C)),
+        0xCB82 => Some(InstructionKind::RES(0, ArgKind::D)),
+        0xCB83 => Some(InstructionKind::RES(0, ArgKind::E)),
+        0xCB84 => Some(InstructionKind::RES(0, ArgKind::H)),
+        0xCB85 => Some(InstructionKind::RES(0, ArgKind::L)),
+        0xCB87 => Some(InstructionKind::RES(0, ArgKind::A)),
+        
+        // SET 0, r (set bit 0)
+        0xCBC0 => Some(InstructionKind::SET(0, ArgKind::B)),
+        0xCBC1 => Some(InstructionKind::SET(0, ArgKind::C)),
+        0xCBC2 => Some(InstructionKind::SET(0, ArgKind::D)),
+        0xCBC3 => Some(InstructionKind::SET(0, ArgKind::E)),
+        0xCBC4 => Some(InstructionKind::SET(0, ArgKind::H)),
+        0xCBC5 => Some(InstructionKind::SET(0, ArgKind::L)),
+        0xCBC7 => Some(InstructionKind::SET(0, ArgKind::A)),
+        
+        // SET 1, r (set bit 1)
+        0xCBC8 => Some(InstructionKind::SET(1, ArgKind::B)),
+        0xCBC9 => Some(InstructionKind::SET(1, ArgKind::C)),
+        0xCBCA => Some(InstructionKind::SET(1, ArgKind::D)),
+        0xCBCB => Some(InstructionKind::SET(1, ArgKind::E)),
+        0xCBCC => Some(InstructionKind::SET(1, ArgKind::H)),
+        0xCBCD => Some(InstructionKind::SET(1, ArgKind::L)),
+        0xCBCF => Some(InstructionKind::SET(1, ArgKind::A)),
+        
+        // SET 2, r (set bit 2)
+        0xCBD0 => Some(InstructionKind::SET(2, ArgKind::B)),
+        0xCBD1 => Some(InstructionKind::SET(2, ArgKind::C)),
+        0xCBD2 => Some(InstructionKind::SET(2, ArgKind::D)),
+        0xCBD3 => Some(InstructionKind::SET(2, ArgKind::E)),
+        0xCBD4 => Some(InstructionKind::SET(2, ArgKind::H)),
+        0xCBD5 => Some(InstructionKind::SET(2, ArgKind::L)),
+        0xCBD7 => Some(InstructionKind::SET(2, ArgKind::A)),
+        
+        // SET 3, r (set bit 3)
+        0xCBD8 => Some(InstructionKind::SET(3, ArgKind::B)),
+        0xCBD9 => Some(InstructionKind::SET(3, ArgKind::C)),
+        0xCBDA => Some(InstructionKind::SET(3, ArgKind::D)),
+        0xCBDB => Some(InstructionKind::SET(3, ArgKind::E)),
+        0xCBDC => Some(InstructionKind::SET(3, ArgKind::H)),
+        0xCBDD => Some(InstructionKind::SET(3, ArgKind::L)),
+        0xCBDF => Some(InstructionKind::SET(3, ArgKind::A)),
+        
+        // SET 4, r (set bit 4)
+        0xCBE0 => Some(InstructionKind::SET(4, ArgKind::B)),
+        0xCBE1 => Some(InstructionKind::SET(4, ArgKind::C)),
+        0xCBE2 => Some(InstructionKind::SET(4, ArgKind::D)),
+        0xCBE3 => Some(InstructionKind::SET(4, ArgKind::E)),
+        0xCBE4 => Some(InstructionKind::SET(4, ArgKind::H)),
+        0xCBE5 => Some(InstructionKind::SET(4, ArgKind::L)),
+        0xCBE7 => Some(InstructionKind::SET(4, ArgKind::A)),
+        
+        // SET 5, r (set bit 5)
+        0xCBE8 => Some(InstructionKind::SET(5, ArgKind::B)),
+        0xCBE9 => Some(InstructionKind::SET(5, ArgKind::C)),
+        0xCBEA => Some(InstructionKind::SET(5, ArgKind::D)),
+        0xCBEB => Some(InstructionKind::SET(5, ArgKind::E)),
+        0xCBEC => Some(InstructionKind::SET(5, ArgKind::H)),
+        0xCBED => Some(InstructionKind::SET(5, ArgKind::L)),
+        0xCBEF => Some(InstructionKind::SET(5, ArgKind::A)),
+        
+        // SET 6, r (set bit 6)
+        0xCBF0 => Some(InstructionKind::SET(6, ArgKind::B)),
+        0xCBF1 => Some(InstructionKind::SET(6, ArgKind::C)),
+        0xCBF2 => Some(InstructionKind::SET(6, ArgKind::D)),
+        0xCBF3 => Some(InstructionKind::SET(6, ArgKind::E)),
+        0xCBF4 => Some(InstructionKind::SET(6, ArgKind::H)),
+        0xCBF5 => Some(InstructionKind::SET(6, ArgKind::L)),
+        0xCBF7 => Some(InstructionKind::SET(6, ArgKind::A)),
+        
+        // SET 7, r (set bit 7)
+        0xCBF8 => Some(InstructionKind::SET(7, ArgKind::B)),
+        0xCBF9 => Some(InstructionKind::SET(7, ArgKind::C)),
+        0xCBFA => Some(InstructionKind::SET(7, ArgKind::D)),
+        0xCBFB => Some(InstructionKind::SET(7, ArgKind::E)),
+        0xCBFC => Some(InstructionKind::SET(7, ArgKind::H)),
+        0xCBFD => Some(InstructionKind::SET(7, ArgKind::L)),
+        0xCBFF => Some(InstructionKind::SET(7, ArgKind::A)),
+        
         _ => None,
     }
 }
 
-pub fn get_bit_instruction_size(opcode: u16) -> Option<u16> {
-    // All CB-prefixed instructions are 2 bytes
-    if opcode >= 0xCB40 && opcode <= 0xCB7F {
-        Some(2)
-    } else {
-        None
-    }
-}

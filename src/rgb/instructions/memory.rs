@@ -3,6 +3,8 @@ use super::{InstructionKind, ArgKind};
 pub fn decode_memory_instruction(opcode: u8, immediate: Option<u8>) -> Option<InstructionKind> {
     match opcode {
         // Store A into memory locations
+        0x02 => Some(InstructionKind::LD_MEM(ArgKind::BC, ArgKind::A)),     // LD (BC),A
+        0x12 => Some(InstructionKind::LD_MEM(ArgKind::DE, ArgKind::A)),     // LD (DE),A
         0x32 => Some(InstructionKind::LD_MEM_DEC(ArgKind::HL, ArgKind::A)), // LD (HL-),A
         0x22 => Some(InstructionKind::LD_MEM_INC(ArgKind::HL, ArgKind::A)), // LD (HL+),A
         0x77 => Some(InstructionKind::LD_MEM(ArgKind::HL, ArgKind::A)),     // LD (HL),A
@@ -38,7 +40,7 @@ pub fn decode_memory_instruction(opcode: u8, immediate: Option<u8>) -> Option<In
 pub fn get_memory_instruction_size(opcode: u8) -> Option<u16> {
     match opcode {
         // Single byte instructions
-        0x32 | 0x22 | 0x77 | 0x70..=0x75 | 0x2A | 0x3A | 0x7E | 
+        0x02 | 0x12 | 0x32 | 0x22 | 0x77 | 0x70..=0x75 | 0x2A | 0x3A | 0x7E | 
         0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0xE2 | 0xF2 => Some(1),
         
         // Two byte instructions (opcode + immediate)

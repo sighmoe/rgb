@@ -69,6 +69,15 @@ pub fn decode_load_instruction(opcode: u8, immediate: Option<u8>, immediate16: O
         // Load A into memory at 16-bit address
         0xEA => Some(InstructionKind::LD_MEM_16(ArgKind::Immediate16(immediate16.unwrap_or(0)), ArgKind::A)), // LD (nn),A
         
+        // Load from memory at 16-bit address
+        0xFA => Some(InstructionKind::LD_FROM_MEM_16(ArgKind::A, ArgKind::Immediate16(immediate16.unwrap_or(0)))), // LD A,(nn)
+        
+        // Special load operation - LD HL,SP+r8
+        0xF8 => Some(InstructionKind::LDHL_SP_R8(immediate.unwrap_or(0) as i8)),
+        
+        // Special load operation - LD SP,HL
+        0xF9 => Some(InstructionKind::LD(ArgKind::SP, ArgKind::HL)),
+        
         _ => None,
     }
 }
@@ -79,7 +88,7 @@ pub fn get_load_instruction_size(opcode: u8) -> Option<u16> {
         0x01 | 0x11 | 0x21 | 0x31 => Some(3),
         
         // 8-bit immediate loads (2 bytes: opcode + 1 immediate byte)
-        0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x3E => Some(2),
+        0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x3E | 0xF8 => Some(2),
         
         // Register-to-register loads and indirect loads (1 byte: opcode only)
         0x41 | 0x42 | 0x43 | 0x44 | 0x45 | 0x47 |
@@ -89,10 +98,10 @@ pub fn get_load_instruction_size(opcode: u8) -> Option<u16> {
         0x60 | 0x61 | 0x62 | 0x63 | 0x65 | 0x67 |
         0x68 | 0x69 | 0x6A | 0x6B | 0x6C | 0x6F |
         0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D | 0x7F |
-        0x0A | 0x1A => Some(1),
+        0x0A | 0x1A | 0xF9 => Some(1),
         
         // Load A into memory at 16-bit address (3 bytes: opcode + 2 address bytes)
-        0xEA => Some(3),
+        0xEA | 0xFA => Some(3),
         
         _ => None,
     }
