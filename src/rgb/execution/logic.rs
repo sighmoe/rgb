@@ -18,6 +18,15 @@ pub fn execute(cpu: &mut Cpu, instruction: &InstructionKind) -> u8 {
         InstructionKind::CP_MEM(dest, addr_reg) => {
             execute_cp_mem(cpu, dest, addr_reg)
         }
+        InstructionKind::CPL => {
+            execute_cpl(cpu)
+        }
+        InstructionKind::SCF => {
+            execute_scf(cpu)
+        }
+        InstructionKind::CCF => {
+            execute_ccf(cpu)
+        }
         _ => panic!("Invalid logic instruction"),
     }
 }
@@ -31,6 +40,10 @@ fn execute_and(cpu: &mut Cpu, dest: &ArgKind, src: &ArgKind) -> u8 {
         ArgKind::E => cpu.registers.e,
         ArgKind::H => cpu.registers.h,
         ArgKind::L => cpu.registers.l,
+        ArgKind::HL => {
+            let addr = cpu.registers.get_hl();
+            cpu.mmap.read(addr)
+        }
         ArgKind::Immediate(value) => *value,
         _ => panic!("Unsupported AND source"),
     };
@@ -41,7 +54,11 @@ fn execute_and(cpu: &mut Cpu, dest: &ArgKind, src: &ArgKind) -> u8 {
         cpu.registers.f.half_carry = true;
         cpu.registers.f.carry = false;
     }
-    4
+    match src {
+        ArgKind::HL => 8, // (HL) operations take 8 cycles
+        ArgKind::Immediate(_) => 8, // Immediate operations take 8 cycles
+        _ => 4, // Register operations take 4 cycles
+    }
 }
 
 fn execute_or(cpu: &mut Cpu, dest: &ArgKind, src: &ArgKind) -> u8 {
@@ -132,4 +149,37 @@ fn execute_cp_mem(cpu: &mut Cpu, dest: &ArgKind, addr_reg: &ArgKind) -> u8 {
         cpu.registers.f.carry = cpu.registers.a < src_value;
     }
     8
+}
+
+fn execute_cpl(cpu: &mut Cpu) -> u8 {
+    // CPL - Complement A register (flip all bits)
+    cpu.registers.a = !cpu.registers.a; // Bitwise NOT
+    
+    // Set flags - CPL has specific flag behavior
+    // Zero flag is not affected
+    cpu.registers.f.subtract = true; // Always set
+    cpu.registers.f.half_carry = true; // Always set
+    // Carry flag is not affected
+    
+    4 // Takes 4 cycles
+}
+
+fn execute_scf(cpu: &mut Cpu) -> u8 {
+    // SCF - Set Carry Flag
+    // Zero flag is not affected
+    cpu.registers.f.subtract = false; // Always cleared
+    cpu.registers.f.half_carry = false; // Always cleared
+    cpu.registers.f.carry = true; // Always set
+    
+    4 // Takes 4 cycles
+}
+
+fn execute_ccf(cpu: &mut Cpu) -> u8 {
+    // CCF - Complement Carry Flag
+    // Zero flag is not affected
+    cpu.registers.f.subtract = false; // Always cleared
+    cpu.registers.f.half_carry = false; // Always cleared
+    cpu.registers.f.carry = !cpu.registers.f.carry; // Complement carry flag
+    
+    4 // Takes 4 cycles
 }

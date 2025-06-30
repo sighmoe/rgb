@@ -100,6 +100,16 @@ pub enum InstructionKind {
     // Decimal operations
     DAA,  // Decimal Adjust Accumulator
     
+    // Complement operations
+    CPL,  // Complement A register (flip all bits)
+    
+    // Flag operations
+    SCF,  // Set Carry Flag
+    CCF,  // Complement Carry Flag
+    
+    // Stack pointer arithmetic
+    ADD_SP_R8(i8), // ADD SP,r8 - Add signed 8-bit immediate to SP
+    
     // Stack operations
     PUSH(ArgKind), // Push register pair onto stack
     POP(ArgKind),  // Pop register pair from stack
@@ -189,7 +199,11 @@ pub fn decode_instruction(opcode: u8, immediate: Option<u8>, immediate16: Option
         0x17 => InstructionKind::RLA,
         0x1F => InstructionKind::RRA,
         0x27 => InstructionKind::DAA,
+        0x2F => InstructionKind::CPL,
+        0x37 => InstructionKind::SCF,
+        0x3F => InstructionKind::CCF,
         0xD9 => InstructionKind::RETI,
+        0xE8 => InstructionKind::ADD_SP_R8(immediate.unwrap_or(0) as i8),
         _ => panic!("Unknown opcode: 0x{:02X}", opcode),
     }
 }
@@ -244,7 +258,11 @@ pub fn get_instruction_size(opcode: u8) -> u16 {
         0x17 => 1, // RLA
         0x1F => 1, // RRA
         0x27 => 1, // DAA
+        0x2F => 1, // CPL
+        0x37 => 1, // SCF
+        0x3F => 1, // CCF
         0xD9 => 1, // RETI
+        0xE8 => 2, // ADD SP,r8 - 2 bytes: opcode + signed immediate
         _ => panic!("Unknown opcode: 0x{:02X}", opcode),
     }
 }

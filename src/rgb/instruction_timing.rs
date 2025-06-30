@@ -176,5 +176,9 @@ pub fn get_instruction_cycles(instruction: &InstructionKind, condition_taken: bo
         InstructionKind::EI => 4,
         InstructionKind::DI => 4,
         InstructionKind::DAA => 4, // DAA takes 4 cycles
+        InstructionKind::CPL => 4, // CPL takes 4 cycles
+        InstructionKind::SCF => 4, // SCF takes 4 cycles
+        InstructionKind::CCF => 4, // CCF takes 4 cycles
+        InstructionKind::ADD_SP_R8(_) => 16, // ADD SP,r8 takes 16 cycles
     }
 }

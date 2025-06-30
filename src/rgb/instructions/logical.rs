@@ -21,6 +21,7 @@ pub fn decode_logical_instruction(opcode: u8, immediate: Option<u8>) -> Option<I
         0xA3 => Some(InstructionKind::AND(ArgKind::A, ArgKind::E)), // AND A,E
         0xA4 => Some(InstructionKind::AND(ArgKind::A, ArgKind::H)), // AND A,H
         0xA5 => Some(InstructionKind::AND(ArgKind::A, ArgKind::L)), // AND A,L
+        0xA6 => Some(InstructionKind::AND(ArgKind::A, ArgKind::HL)), // AND A,(HL)
         0xE6 => Some(InstructionKind::AND(ArgKind::A, ArgKind::Immediate(immediate.unwrap_or(0)))), // AND A,d8
         
         // OR instructions
@@ -52,7 +53,7 @@ pub fn decode_logical_instruction(opcode: u8, immediate: Option<u8>) -> Option<I
 pub fn get_logical_instruction_size(opcode: u8) -> Option<u16> {
     match opcode {
         // Register to register operations (1 byte)
-        0xAF | 0xA8..=0xAE | 0xA7 | 0xA0..=0xA5 | 
+        0xAF | 0xA8..=0xAE | 0xA7 | 0xA0..=0xA6 | 
         0xB7 | 0xB0..=0xB6 | 0xBF | 0xB8..=0xBE => Some(1),
         
         // Immediate operations (2 bytes: opcode + immediate)

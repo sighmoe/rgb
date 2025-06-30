@@ -36,6 +36,9 @@ pub fn execute(cpu: &mut Cpu, instruction: &InstructionKind) -> u8 {
         InstructionKind::DAA => {
             execute_daa(cpu)
         }
+        InstructionKind::ADD_SP_R8(offset) => {
+            execute_add_sp_r8(cpu, *offset)
+        }
         _ => panic!("Invalid arithmetic instruction"),
     }
 }
@@ -349,4 +352,26 @@ fn execute_daa(cpu: &mut Cpu) -> u8 {
     cpu.registers.f.carry = carry;
     // Subtract flag is preserved
     4
+}
+
+fn execute_add_sp_r8(cpu: &mut Cpu, offset: i8) -> u8 {
+    // ADD SP,r8 - Add signed 8-bit immediate to Stack Pointer
+    let sp_value = cpu.sp as i32;
+    let offset_value = offset as i32;
+    let result = sp_value.wrapping_add(offset_value) as u16;
+    
+    // Calculate flags based on the low 8 bits only (Game Boy specific behavior)
+    let sp_low = (cpu.sp & 0xFF) as u8;
+    let offset_u8 = offset as u8;
+    
+    // Set flags - ADD SP,r8 has specific flag behavior
+    cpu.registers.f.zero = false; // Always cleared
+    cpu.registers.f.subtract = false; // Always cleared
+    // Half carry is set if there's a carry from bit 3 to bit 4 in the low byte
+    cpu.registers.f.half_carry = (sp_low & 0x0F) + (offset_u8 & 0x0F) > 0x0F;
+    // Carry is set if there's a carry from bit 7 to bit 8 in the low byte
+    cpu.registers.f.carry = (sp_low as u16) + (offset_u8 as u16) > 0xFF;
+    
+    cpu.sp = result;
+    16 // Takes 16 cycles
 }

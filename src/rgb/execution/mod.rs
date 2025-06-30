@@ -42,7 +42,8 @@ impl Cpu {
             InstructionKind::DEC_MEM(..) |
             InstructionKind::INC16(..) |
             InstructionKind::DEC16(..) |
-            InstructionKind::DAA => {
+            InstructionKind::DAA |
+            InstructionKind::ADD_SP_R8(..) => {
                 arithmetic::execute(self, &instruction.kind)
             }
 
@@ -51,7 +52,10 @@ impl Cpu {
             InstructionKind::OR(..) |
             InstructionKind::XOR(..) |
             InstructionKind::CP(..) |
-            InstructionKind::CP_MEM(..) => {
+            InstructionKind::CP_MEM(..) |
+            InstructionKind::CPL |
+            InstructionKind::SCF |
+            InstructionKind::CCF => {
                 logic::execute(self, &instruction.kind)
             }
 
