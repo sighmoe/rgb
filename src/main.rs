@@ -2,13 +2,21 @@ mod rgb;
 
 use macroquad::prelude::*;
 use rgb::cpu::Cpu;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 
 struct GameBoyEmulator {
     cpu: Cpu,
+    #[cfg(debug_assertions)]
+    trace_writer: Option<BufWriter<File>>,
+    #[cfg(debug_assertions)]
+    trace_json: bool,
+    #[cfg(debug_assertions)]
+    instruction_count: u64,
 }
 
 impl GameBoyEmulator {
-    fn new(rom_path: &str, skip_boot_rom: bool) -> Self {
+    fn new(rom_path: &str, skip_boot_rom: bool, trace_file: Option<String>, trace_json: bool) -> Self {
         let mut cpu = if skip_boot_rom {
             Cpu::new_post_boot()
         } else {
@@ -28,112 +36,102 @@ impl GameBoyEmulator {
             cpu.sp = 0xFFFE;  // Initial stack pointer
         }
         
-        Self { cpu }
+        #[cfg(debug_assertions)]
+        let trace_writer = if let Some(trace_path) = trace_file {
+            match File::create(&trace_path) {
+                Ok(file) => {
+                    let mut writer = BufWriter::new(file);
+                    if trace_json {
+                        // Write JSON array opening
+                        writeln!(writer, "[").unwrap();
+                    }
+                    Some(writer)
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to create trace file '{}': {}", trace_path, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        Self { 
+            cpu,
+            #[cfg(debug_assertions)]
+            trace_writer,
+            #[cfg(debug_assertions)]
+            trace_json,
+            #[cfg(debug_assertions)]
+            instruction_count: 0,
+        }
     }
-
-    fn step(&mut self) {
-        // Handle interrupts first (even when halted, interrupts can wake CPU)
-        if self.cpu.check_interrupts() {
-            let interrupt_cycles = self.cpu.handle_interrupt();
-            if interrupt_cycles > 0 {
-                // Step PPU for interrupt handling cycles, checking for new interrupts
-                let (vblank_interrupt, stat_interrupt) = self.cpu.mmap.step_ppu(interrupt_cycles as u16);
-                if vblank_interrupt {
-                    self.cpu.request_vblank_interrupt();
-                }
-                if stat_interrupt {
-                    self.cpu.request_lcd_stat_interrupt();
-                }
-                return;
-            }
-        }
-        
-        // If CPU is halted, still need to step timer and PPU to generate interrupts
-        if self.cpu.halted {
-            // When halted, advance 4 cycles (1 M-cycle) to keep timer/PPU running
-            let halt_cycles = 4u16;
+    
+    #[cfg(debug_assertions)]
+    fn write_trace(&mut self) {
+        if let Some(ref mut writer) = self.trace_writer {
+            let pc = self.cpu.pc;
+            let sp = self.cpu.sp;
+            let regs = &self.cpu.registers;
             
-            // Step timer and check for timer interrupt
-            if self.cpu.mmap.step_timer(halt_cycles) {
-                self.cpu.request_timer_interrupt();
-            }
+            // Read the next few bytes for instruction context
+            let mem1 = self.cpu.mmap.read(pc);
+            let mem2 = self.cpu.mmap.read(pc.wrapping_add(1));
+            let mem3 = self.cpu.mmap.read(pc.wrapping_add(2));
+            let mem4 = self.cpu.mmap.read(pc.wrapping_add(3));
             
-            // Step PPU and check for PPU interrupts
-            let (vblank_interrupt, stat_interrupt) = self.cpu.mmap.step_ppu(halt_cycles);
-            if vblank_interrupt {
-                self.cpu.request_vblank_interrupt();
-            }
-            if stat_interrupt {
-                self.cpu.request_lcd_stat_interrupt();
-            }
-            
-            return;
-        }
-        
-        
-        if !self.cpu.halted {
-            // Debug: Check if we're stuck in a loop
-            static mut LAST_PC: u16 = 0;
-            static mut STUCK_COUNT: u32 = 0;
-            static mut STEP_COUNT: u32 = 0;
-            unsafe {
-                STEP_COUNT += 1;
-                
-                // Debug timer and interrupt registers periodically
-                if STEP_COUNT % 50000 == 0 {
-                    #[cfg(debug_assertions)]
-                    {
-                        use log::debug;
-                        let div = self.cpu.mmap.read(0xFF04);
-                        let tima = self.cpu.mmap.read(0xFF05);
-                        let tma = self.cpu.mmap.read(0xFF06);
-                        let tac = self.cpu.mmap.read(0xFF07);
-                        let ie = self.cpu.mmap.read(0xFFFF);
-                        let if_reg = self.cpu.mmap.read(0xFF0F);
-                        debug!("STEP {}: PC=0x{:04X}, DIV=0x{:02X}, TIMA=0x{:02X}, TMA=0x{:02X}, TAC=0x{:02X}, IE=0x{:02X}, IF=0x{:02X}, IME={}", 
-                            STEP_COUNT, self.cpu.pc, div, tima, tma, tac, ie, if_reg, self.cpu.ime);
-                    }
-                }
-                
-                if LAST_PC == self.cpu.pc {
-                    STUCK_COUNT += 1;
-                    if STUCK_COUNT > 100 {
-                        #[cfg(debug_assertions)]
-                        {
-                            use log::debug;
-                            if self.cpu.pc == 0x00E9 {
-                                let hl = self.cpu.registers.get_hl();
-                                let de = self.cpu.registers.get_de();
-                                let mem_val = self.cpu.mmap.read(hl);
-                                debug!("BOOTSTRAP LOGO VERIFICATION LOOP:");
-                                debug!("  PC: 0x{:04X}, A: 0x{:02X}, HL: 0x{:04X}, DE: 0x{:04X}", 
-                                    self.cpu.pc, self.cpu.registers.a, hl, de);
-                                debug!("  Memory at (HL): 0x{:02X}, Zero flag: {}", 
-                                    mem_val, self.cpu.registers.f.zero);
-                                debug!("  Expected comparison: A(0x{:02X}) vs (HL)(0x{:02X})", 
-                                    self.cpu.registers.a, mem_val);
-                                debug!("  DE should be in range 0x00A8-0x00D7, current offset: 0x{:02X}", 
-                                    de.wrapping_sub(0x00A8));
-                            } else {
-                                debug!("STUCK at PC: 0x{:04X}, instruction: 0x{:02X}", 
-                                    self.cpu.pc, 
-                                    self.cpu.mmap.read(self.cpu.pc)
-                                );
-                            }
-                        }
-                        STUCK_COUNT = 0;
-                    }
-                } else {
-                    STUCK_COUNT = 0;
-                }
-                LAST_PC = self.cpu.pc;
+            if self.trace_json {
+                let comma = if self.instruction_count > 0 { "," } else { "" };
+                let trace_entry = format!(
+                    r#"{}{{
+    "instruction": {},
+    "A": "{:02X}",
+    "F": "{:02X}",
+    "B": "{:02X}",
+    "C": "{:02X}",
+    "D": "{:02X}",
+    "E": "{:02X}",
+    "H": "{:02X}",
+    "L": "{:02X}",
+    "SP": "{:04X}",
+    "PC": "{:04X}",
+    "memory": ["{:02X}", "{:02X}", "{:02X}", "{:02X}"]
+}}"#,
+                    comma,
+                    self.instruction_count,
+                    regs.a,
+                    u8::from(regs.f),
+                    regs.b,
+                    regs.c,
+                    regs.d,
+                    regs.e,
+                    regs.h,
+                    regs.l,
+                    sp,
+                    pc,
+                    mem1, mem2, mem3, mem4
+                );
+                writeln!(writer, "{}", trace_entry).unwrap();
+            } else {
+                // Format: "A: 01 F: B0 B: 00 C: 13 D: 00 E: D8 H: 01 L: 4D SP: FFFE PC: 00:0101 (C3 13 02 CE)"
+                let trace_line = format!(
+                    "A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} H: {:02X} L: {:02X} SP: {:04X} PC: 00:{:04X} ({:02X} {:02X} {:02X} {:02X})",
+                    regs.a,
+                    u8::from(regs.f),
+                    regs.b,
+                    regs.c,
+                    regs.d,
+                    regs.e,
+                    regs.h,
+                    regs.l,
+                    sp,
+                    pc,
+                    mem1, mem2, mem3, mem4
+                );
+                writeln!(writer, "{}", trace_line).unwrap();
             }
             
-            let instruction = self.cpu.decode();
-            let cycles = self.cpu.execute(instruction);
-            
-            // Handle EI delay after instruction execution
-            self.cpu.handle_ei_delay();
+            self.instruction_count += 1;
         }
     }
 
@@ -142,8 +140,25 @@ impl GameBoyEmulator {
     }
 }
 
+#[cfg(debug_assertions)]
+impl Drop for GameBoyEmulator {
+    fn drop(&mut self) {
+        if let Some(ref mut writer) = self.trace_writer {
+            if self.trace_json {
+                // Close JSON array
+                writeln!(writer, "]").unwrap();
+            }
+            // Flush the writer
+            writer.flush().unwrap();
+        }
+    }
+}
+
 #[macroquad::main("Game Boy Emulator")]
 async fn main() {
+    // Set target FPS to 60 (matching Game Boy refresh rate)
+    request_new_screen_size(640.0, 576.0); // 160*4 x 144*4 scale
+    
     // Initialize logger (only in debug builds)
     #[cfg(debug_assertions)]
     env_logger::init();
@@ -152,6 +167,8 @@ async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut rom_path = "./test-roms/pkmn.gb"; // Default ROM if no argument provided
     let mut skip_boot_rom = false;
+    let mut trace_file: Option<String> = None;
+    let mut trace_json = false;
     
     let mut i = 1;
     while i < args.len() {
@@ -160,14 +177,29 @@ async fn main() {
                 skip_boot_rom = true;
                 i += 1;
             }
+            "--trace" | "-t" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --trace requires a file path");
+                    return;
+                }
+                trace_file = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--trace-json" => {
+                trace_json = true;
+                i += 1;
+            }
             "--help" | "-h" => {
                 println!("Game Boy Emulator");
                 println!("Usage: {} [options] [rom_path]", args[0]);
                 println!();
                 println!("Options:");
-                println!("  --skip-boot, -s    Skip the Game Boy boot sequence and start directly with the ROM");
-                println!("  --help, -h         Show this help message");
+                println!("  --skip-boot, -s      Skip the Game Boy boot sequence and start directly with the ROM");
+                println!("  --trace, -t <file>   Write execution trace to the specified file");
+                println!("  --trace-json         Format trace output as JSON (requires --trace)");
+                println!("  --help, -h           Show this help message");
                 println!();
+                println!("Debug tracing is only available in debug builds.");
                 println!("If no ROM path is provided, defaults to './test-roms/pkmn.gb'");
                 return;
             }
@@ -183,118 +215,119 @@ async fn main() {
         }
     }
     
-    let mut emulator = GameBoyEmulator::new(rom_path, skip_boot_rom);
+    // Validate trace options
+    if trace_json && trace_file.is_none() {
+        eprintln!("Error: --trace-json requires --trace <file>");
+        return;
+    }
+    
+    let mut emulator = GameBoyEmulator::new(rom_path, skip_boot_rom, trace_file, trace_json);
     
     loop {
+        
         clear_background(GRAY);
 
-        // Run emulator steps  
-        for _ in 0..50000 {  // Much faster execution for testing
-            emulator.step();
+        // Poll keyboard input and update joypad state
+        let joypad_buttons = rgb::joypad::JoypadButtons {
+            a: is_key_down(KeyCode::Z),          // Z key = A button
+            b: is_key_down(KeyCode::X),          // X key = B button  
+            start: is_key_down(KeyCode::Enter),       // Enter = START button
+            select: is_key_down(KeyCode::RightShift), // Right Shift = SELECT button
+            up: is_key_down(KeyCode::Up),        // Arrow keys = D-pad
+            down: is_key_down(KeyCode::Down),
+            left: is_key_down(KeyCode::Left),
+            right: is_key_down(KeyCode::Right),
+        };
+        
+        
+        // Update joypad and check for button press interrupts
+        let button_pressed = emulator.cpu.mmap.update_joypad(joypad_buttons);
+        if button_pressed {
+            emulator.cpu.request_joypad_interrupt();
+        }
+
+        // Run emulator for one frame (approximately 1/60th of a second)
+        // Game Boy CPU runs at ~4.194 MHz, so we need ~69,905 cycles per frame at 60fps
+        const CYCLES_PER_FRAME: u32 = 69905;
+        let mut cycles_executed = 0;
+        
+        while cycles_executed < CYCLES_PER_FRAME {
+            // Write trace before decoding/executing instruction
+            #[cfg(debug_assertions)]
+            emulator.write_trace();
             
-            // Break if CPU is halted to prevent infinite loops
+            let instruction = emulator.cpu.decode();
+            let cycles = emulator.cpu.execute(instruction);
+            
+            // Handle EI delay after instruction execution
+            emulator.cpu.handle_ei_delay();
+            
+            // Handle interrupts
+            if emulator.cpu.check_interrupts() {
+                let interrupt_cycles = emulator.cpu.handle_interrupt();
+                cycles_executed += interrupt_cycles as u32;
+            }
+            
+            // If CPU is halted but an interrupt is pending, wake up
+            if emulator.cpu.halted && emulator.cpu.check_pending_interrupts() {
+                emulator.cpu.halted = false;
+            }
+            
+            // If halted, advance timer and PPU but don't execute instructions
             if emulator.cpu.halted {
-                break;
+                let halt_cycles = 4u16; // Advance 4 cycles while halted
+                
+                // Step timer and check for timer interrupt
+                if emulator.cpu.mmap.step_timer(halt_cycles) {
+                    emulator.cpu.request_timer_interrupt();
+                }
+                
+                // Step PPU and check for PPU interrupts
+                let (vblank_interrupt, stat_interrupt) = emulator.cpu.mmap.step_ppu(halt_cycles);
+                if vblank_interrupt {
+                    emulator.cpu.request_vblank_interrupt();
+                }
+                if stat_interrupt {
+                    emulator.cpu.request_lcd_stat_interrupt();
+                }
+                
+                cycles_executed += halt_cycles as u32;
+            } else {
+                // Step timer for instruction cycles
+                if emulator.cpu.mmap.step_timer(cycles as u16) {
+                    emulator.cpu.request_timer_interrupt();
+                }
+                
+                // Step PPU for instruction cycles
+                let (vblank_interrupt, stat_interrupt) = emulator.cpu.mmap.step_ppu(cycles as u16);
+                if vblank_interrupt {
+                    emulator.cpu.request_vblank_interrupt();
+                }
+                if stat_interrupt {
+                    emulator.cpu.request_lcd_stat_interrupt();
+                }
+                
+                cycles_executed += cycles as u32;
             }
         }
         
-        // Remove test pattern to see actual bootstrap ROM output
+        
         
         // Get frame buffer from PPU
         let frame_buffer = emulator.get_frame_buffer();
         
-        // Debug: Print some state occasionally
-        static mut FRAME_COUNTER: u32 = 0;
-        unsafe {
-            FRAME_COUNTER += 1;
-            if FRAME_COUNTER % 30 == 0 {  // Print more frequently with faster speed
-                let ly_value = emulator.cpu.mmap.read(0xFF44);
-                #[cfg(debug_assertions)]
-                {
-                    use log::debug;
-                    if ly_value == 144 {
-                        debug!("*** LY REACHED 144! PC: 0x{:04X}, A: 0x{:02X} ***", emulator.cpu.pc, emulator.cpu.registers.a);
-                    }
-                    debug!("PC: 0x{:04X}, A: 0x{:02X}, C: 0x{:02X}, E: 0x{:02X}, LY: {}, Bootstrap: {}", 
-                        emulator.cpu.pc, 
-                        emulator.cpu.registers.a,
-                        emulator.cpu.registers.c,
-                        emulator.cpu.registers.e,
-                        ly_value,
-                        if emulator.cpu.pc < 0x0100 { "ON" } else { "OFF" }
-                    );
-                }
-            }
-            
-            #[cfg(debug_assertions)]
-            {
-                use log::debug;
-                // Debug when entering logo verification
-                if emulator.cpu.pc == 0x00E0 {
-                    let hl = emulator.cpu.registers.get_hl();
-                    let de = emulator.cpu.registers.get_de();
-                    debug!("ENTERING LOGO VERIFICATION: HL=0x{:04X}, DE=0x{:04X}", hl, de);
-                }
-                
-                // Debug PPU state during bootstrap logo rendering
-                if emulator.cpu.pc >= 0x0070 && emulator.cpu.pc < 0x00E0 && FRAME_COUNTER % 60 == 0 {
-                    let lcdc = emulator.cpu.mmap.read(0xFF40);
-                    let bgp = emulator.cpu.mmap.read(0xFF47);
-                    let scy = emulator.cpu.mmap.read(0xFF42);
-                    let scx = emulator.cpu.mmap.read(0xFF43);
-                    debug!("PPU DEBUG: LCDC=0x{:02X} (bg_window_tiles={}), BGP=0x{:02X}, SCY={}, SCX={}", 
-                        lcdc, (lcdc & 0x10) != 0, bgp, scy, scx);
-                }
-            }
-        }
-        
-        // Debug logging (only in debug builds)
-        #[cfg(debug_assertions)]
-        unsafe {
-            if FRAME_COUNTER % 30 == 0 && (emulator.cpu.pc >= 0x0060 || !emulator.cpu.mmap.bootstrap_enabled) {
-                use log::debug;
-                debug!("=== NINTENDO LOGO ANALYSIS ===");
-                let frame_buffer = emulator.get_frame_buffer();
-                
-                // Print the actual logo area with better contrast
-                for debug_y in 64..80 {
-                    let mut line = String::new();
-                    for debug_x in 32..128 {
-                        let pixel = frame_buffer[debug_y * 160 + debug_x];
-                        let char = match pixel {
-                            0 => ' ',  // White (background)
-                            1 => '.',  // Light gray
-                            2 => '#',  // Dark gray
-                            3 => '█',  // Black (logo)
-                            _ => '?',  // Error
-                        };
-                        line.push(char);
-                    }
-                    debug!("Y{:02}: {}", debug_y, line);
-                }
-                
-                // Debug tile addressing mode issue
-                let lcdc = emulator.cpu.mmap.read(0xFF40);
-                let bg_window_tiles = (lcdc & 0x10) != 0;
-                debug!("LCDC: 0x{:02X}, bg_window_tiles: {} ({})", 
-                    lcdc, bg_window_tiles,
-                    if bg_window_tiles { "unsigned 0x8000-0x8FFF" } else { "signed 0x8800-0x97FF base 0x9000" }
-                );
-                
-                debug!("=== END NINTENDO LOGO ANALYSIS ===");
-            }
-        }
 
         // Draw the Game Boy screen (160x144)
         let scale = 4.0;
         for y in 0..144 {
             for x in 0..160 {
                 let pixel = frame_buffer[y * 160 + x];
+                // Original Game Boy green monochrome colors
                 let color = match pixel {
-                    0 => WHITE,      // Lightest
-                    1 => LIGHTGRAY,  // Light
-                    2 => DARKGRAY,   // Dark  
-                    3 => BLACK,      // Darkest
+                    0 => Color::new(0.616, 0.733, 0.059, 1.0), // Lightest green
+                    1 => Color::new(0.541, 0.675, 0.059, 1.0), // Light green
+                    2 => Color::new(0.188, 0.384, 0.188, 1.0), // Dark green
+                    3 => Color::new(0.063, 0.247, 0.063, 1.0), // Darkest green
                     _ => MAGENTA,    // Error color
                 };
                 
@@ -307,8 +340,12 @@ async fn main() {
                 );
             }
         }
+        
 
-        draw_text("Game Boy Emulator", 10.0, screen_height() - 20.0, 20.0, WHITE);
+        // Display FPS and emulator info
+        let fps = get_fps();
+        let fps_text = format!("Game Boy Emulator - FPS: {:.1}", fps);
+        draw_text(&fps_text, 10.0, screen_height() - 20.0, 20.0, WHITE);
 
         next_frame().await
     }

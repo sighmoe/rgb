@@ -1,14 +1,17 @@
 use super::ppu::Ppu;
 use super::cart::Cart;
 use super::timer::Timer;
+use super::joypad::Joypad;
 use std::fs;
 use std::path::Path;
+#[cfg(debug_assertions)]
 use log::debug;
 
 pub struct MemoryMap {
     contents: [u8; 65536],
     ppu: Ppu,
     timer: Timer,
+    joypad: Joypad,
     cart: Option<Cart>,
     pub bootstrap_enabled: bool,
 }
@@ -19,6 +22,7 @@ impl MemoryMap {
             contents: [0; 65536],
             ppu: Ppu::new(),
             timer: Timer::new(),
+            joypad: Joypad::new(),
             cart: None,
             bootstrap_enabled: true,
         }
@@ -31,12 +35,16 @@ impl MemoryMap {
             contents: [0; 65536],
             ppu: Ppu::new_post_boot(),
             timer: Timer::new_post_boot(),
+            joypad: Joypad::new(),
             cart: None,
             bootstrap_enabled: false, // Bootstrap ROM already disabled
         };
         
         // Set post-boot hardware register values
         mmap.init_post_boot_registers();
+        
+        // Load standard tile graphics data that games expect after boot ROM
+        mmap.init_post_boot_vram();
         
         mmap
     }
@@ -71,6 +79,31 @@ impl MemoryMap {
         self.contents[0xFF50] = 0x01; // Bootstrap ROM disabled
     }
     
+    /// Initialize VRAM with tile graphics data that games expect after boot ROM completion
+    fn init_post_boot_vram(&mut self) {
+        // The boot ROM loads standard tile graphics data to VRAM that many games depend on
+        // Pokemon specifically expects tile graphics at 0x8000+ range to be available
+        
+        // Create a simple tile pattern that Pokemon can use for tile ID 0x7F
+        // This is a basic 8x8 tile with some pattern instead of all zeros
+        let basic_tile_data = [
+            0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,  // Row pattern
+            0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,  // Row pattern  
+        ];
+        
+        // Pokemon uses tile ID 0x7F in signed mode, which maps to:
+        // 0x9000 + (127 * 16) = 0x97F0 (VRAM offset 0x17F0)
+        let tile_addr = 0x17F0;
+        
+        // Copy tile data to VRAM  
+        for (i, &byte) in basic_tile_data.iter().enumerate() {
+            if tile_addr + i < 0x2000 {  // Ensure within VRAM bounds
+                self.ppu.vram[tile_addr + i] = byte;
+            }
+        }
+        
+    }
+    
     /// Disables the bootstrap ROM, allowing cartridge access to 0x0000-0x00FF
     pub fn disable_bootstrap(&mut self) {
         self.bootstrap_enabled = false;
@@ -83,12 +116,17 @@ impl MemoryMap {
     }
 
     pub fn write(&mut self, addr: u16, val: u8) {
+        
         match addr {
             // Cartridge ROM area (0x0000-0x7FFF) - handle MBC writes
             0x0000..=0x7FFF => {
                 if let Some(ref mut cart) = self.cart {
                     cart.write(addr, val);
                 }
+            }
+            // Joypad Register (0xFF00)
+            0xFF00 => {
+                self.joypad.write_register(val);
             }
             // Timer Registers (0xFF04-0xFF07)
             0xFF04..=0xFF07 => {
@@ -100,19 +138,6 @@ impl MemoryMap {
             }
             // VRAM (0x8000-0x9FFF)
             0x8000..=0x9FFF => {
-                // Debug tile map writes for Nintendo logo area (0x9800 + background area)
-                if addr >= 0x9800 && addr <= 0x9BFF && val != 0x00 {
-                    let tile_x = (addr - 0x9800) % 32;
-                    let tile_y = (addr - 0x9800) / 32;
-                    static mut TILEMAP_WRITE_COUNT: u32 = 0;
-                    unsafe {
-                        TILEMAP_WRITE_COUNT += 1;
-                        if TILEMAP_WRITE_COUNT <= 25 {
-                            debug!("TileMap write: addr=0x{:04X}, tile_pos=({},{}), tile_id=0x{:02X}", 
-                                addr, tile_x, tile_y, val);
-                        }
-                    }
-                }
                 self.ppu.write_vram(addr, val);
             }
             // OAM (0xFE00-0xFE9F)
@@ -123,6 +148,7 @@ impl MemoryMap {
             0xFF50 => {
                 if val != 0 {
                     self.bootstrap_enabled = false;
+                    #[cfg(debug_assertions)]
                     debug!("Bootstrap ROM disabled, switching to cartridge");
                 }
             }
@@ -133,17 +159,6 @@ impl MemoryMap {
             }
             0xFFFF => {
                 // IE register - Interrupt Enable
-                #[cfg(debug_assertions)]
-                {
-                    use log::debug;
-                    static mut IE_WRITE_COUNT: u32 = 0;
-                    unsafe {
-                        IE_WRITE_COUNT += 1;
-                        if IE_WRITE_COUNT <= 10 {
-                            debug!("IE register write: value=0x{:02X}", val);
-                        }
-                    }
-                }
                 self.contents[addr as usize] = val;
             }
             // Regular memory
@@ -168,6 +183,8 @@ impl MemoryMap {
                     self.contents[addr as usize]
                 }
             }
+            // Joypad Register (0xFF00)
+            0xFF00 => self.joypad.read_register(),
             // Timer Registers (0xFF04-0xFF07)
             0xFF04..=0xFF07 => self.timer.read_register(addr),
             // PPU Registers (0xFF40-0xFF4B)
@@ -189,16 +206,6 @@ impl MemoryMap {
             _ => self.contents[addr as usize],
         };
         
-        // Debug Nintendo logo reads during bootstrap
-        if addr >= 0x0104 && addr <= 0x0133 && self.bootstrap_enabled {
-            static mut LOGO_READ_COUNT: u32 = 0;
-            unsafe {
-                LOGO_READ_COUNT += 1;
-                if LOGO_READ_COUNT <= 20 {
-                    debug!("Logo read: addr=0x{:04X}, value=0x{:02X}", addr, result);
-                }
-            }
-        }
         
         result
     }
@@ -221,7 +228,6 @@ impl MemoryMap {
     fn load_fake_cartridge_header(&mut self) {
         // Only load fake header if no cartridge is loaded
         if self.cart.is_none() {
-            debug!("Loading fake Nintendo logo data for bootstrap ROM");
             // Nintendo logo data that the bootstrap ROM expects at 0x0104-0x0133
             // This is the compressed logo data from a real Game Boy cartridge
             let nintendo_logo: [u8; 48] = [
@@ -238,10 +244,7 @@ impl MemoryMap {
             // Set header checksum (required for bootstrap ROM to pass)
             self.contents[0x014D] = 0x00; // Header checksum placeholder
             
-            // Debug: Print first few bytes of logo data
-            debug!("First 16 Nintendo logo bytes: {:02X?}", &nintendo_logo[0..16]);
         } else {
-            debug!("Using Nintendo logo from loaded cartridge");
         }
     }
 
@@ -270,5 +273,13 @@ impl MemoryMap {
 
     pub fn step_timer(&mut self, cycles: u16) -> bool {
         self.timer.step(cycles)
+    }
+    
+    pub fn update_joypad(&mut self, buttons: super::joypad::JoypadButtons) -> bool {
+        self.joypad.update_buttons(buttons)
+    }
+    
+    pub fn joypad_interrupt_requested(&self) -> bool {
+        self.joypad.any_button_pressed()
     }
 }

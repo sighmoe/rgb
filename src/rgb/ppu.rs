@@ -1,6 +1,7 @@
 // Game Boy PPU (Picture Processing Unit) Implementation
 // Based on DMG (original Game Boy) specifications
 
+#[cfg(debug_assertions)]
 use log::debug;
 
 // PPU Constants
@@ -206,7 +207,7 @@ impl Ppu {
         Self {
             vram: [0; VRAM_SIZE],
             oam: [0; OAM_SIZE],
-            lcdc: LcdcFlags::from_byte(0x91), // LCD enabled, BG on, sprites on
+            lcdc: LcdcFlags::from_byte(0x91), // LCD enabled with default boot ROM settings
             stat: StatFlags::from_byte(0x00), // Mode 0 (H-Blank)
             scy: 0,
             scx: 0,
@@ -370,6 +371,19 @@ impl Ppu {
             return;
         }
 
+        #[cfg(debug_assertions)]
+        {
+            static mut RENDER_DEBUG_COUNT: u32 = 0;
+            unsafe {
+                RENDER_DEBUG_COUNT += 1;
+                if RENDER_DEBUG_COUNT <= 5 || RENDER_DEBUG_COUNT % 1000 == 0 {
+                    debug!("PPU: Rendering scanline {}, bg_enable: {}, window_enable: {}, sprite_enable: {}", 
+                        y, self.lcdc.bg_enable, self.lcdc.window_enable, self.lcdc.sprite_enable);
+                }
+            }
+        }
+
+
         // Render background
         if self.lcdc.bg_enable {
             self.render_background_line(y);
@@ -387,6 +401,17 @@ impl Ppu {
     }
 
     fn render_background_line(&mut self, y: usize) {
+        #[cfg(debug_assertions)]
+        {
+            static mut BG_DEBUG_COUNT: u32 = 0;
+            unsafe {
+                BG_DEBUG_COUNT += 1;
+                if BG_DEBUG_COUNT <= 3 || BG_DEBUG_COUNT % 1000 == 0 {
+                    debug!("PPU: Rendering background line {}, SCY: {}, SCX: {}", y, self.scy, self.scx);
+                }
+            }
+        }
+        
         let scroll_y = self.scy.wrapping_add(y as u8) as usize;
         let tile_y = scroll_y / TILE_SIZE;
         let pixel_y = scroll_y % TILE_SIZE;
@@ -402,20 +427,69 @@ impl Ppu {
             let tile_map_addr = if self.lcdc.bg_tile_map { 0x1C00 } else { 0x1800 };
             let tile_index = (tile_y % 32) * TILES_PER_ROW + (tile_x % 32);
             let tile_id = self.vram[tile_map_addr + tile_index];
-
+            
             let tile_data_addr = if self.lcdc.bg_window_tiles {
                 // Unsigned addressing (0x8000-0x8FFF)
                 tile_id as usize * 16
             } else {
                 // Signed addressing (0x8800-0x97FF) with base at 0x9000
-                let signed_tile_id = tile_id as i8 as i16;
-                (0x1000_i16 + signed_tile_id * 16) as usize
+                // In signed mode, tile IDs 0x80-0xFF are treated as -128 to -1
+                let signed_tile_id = if tile_id >= 0x80 {
+                    (tile_id as i16) - 256
+                } else {
+                    tile_id as i16
+                };
+                let addr = (0x1000_i16 + signed_tile_id * 16) as usize;
+                
+                #[cfg(debug_assertions)]
+                {
+                    static mut TILE_DEBUG_COUNT: u32 = 0;
+                    unsafe {
+                        TILE_DEBUG_COUNT += 1;
+                        if TILE_DEBUG_COUNT <= 5 {
+                            debug!("TILE ADDR DEBUG: tile_id=0x{:02X}, signed={}, addr=0x{:04X} (VRAM offset)", 
+                                tile_id, signed_tile_id, addr);
+                            
+                            // Check if address is within VRAM bounds and what data exists there
+                            if addr < VRAM_SIZE {
+                                let end_addr = (addr + 16).min(VRAM_SIZE);
+                                let tile_data = &self.vram[addr..end_addr];
+                                debug!("TILE DATA at 0x{:04X}: {:02X?}", addr, &tile_data[0..tile_data.len().min(8)]);
+                            } else {
+                                debug!("TILE ADDR OUT OF BOUNDS! addr=0x{:04X}, VRAM size = 0x{:04X}", addr, VRAM_SIZE);
+                            }
+                        }
+                    }
+                }
+                
+                addr
             };
+            
+            #[cfg(debug_assertions)]
+            {
+                static mut TILE_CHECK_COUNT: u32 = 0;
+                unsafe {
+                    TILE_CHECK_COUNT += 1;
+                    if (TILE_CHECK_COUNT <= 10 && tile_id != 0) || (tile_id != 0 && TILE_CHECK_COUNT % 100 == 0) {
+                        debug!("PPU: Non-zero tile at ({},{}) = tile_id: 0x{:02X}, tile_data_addr: 0x{:04X}", 
+                            x, y, tile_id, tile_data_addr);
+                    }
+                }
+            }
 
             let pixel_color = self.get_tile_pixel(tile_data_addr, pixel_x, pixel_y);
             let final_color = self.apply_palette(pixel_color, self.bgp);
             
-            // Nintendo logo tile mapping verified to be working correctly
+            #[cfg(debug_assertions)]
+            {
+                static mut FB_WRITE_COUNT: u32 = 0;
+                unsafe {
+                    FB_WRITE_COUNT += 1;
+                    if FB_WRITE_COUNT <= 20 && final_color != 0 {
+                        debug!("PPU: Writing non-zero pixel at ({},{}) = {}", x, y, final_color);
+                    }
+                }
+            }
             
             self.frame_buffer[y * SCREEN_WIDTH + x] = final_color;
         }
@@ -520,7 +594,19 @@ impl Ppu {
         
         let pixel_color = (high_bit << 1) | low_bit;
         
-        // Pixel extraction verified to be working correctly for Nintendo logo
+        #[cfg(debug_assertions)]
+        {
+            static mut PIXEL_DEBUG_COUNT: u32 = 0;
+            unsafe {
+                PIXEL_DEBUG_COUNT += 1;
+                if tile_data_addr == 0x07F0 || // Tile 0x7F in signed mode
+                   (PIXEL_DEBUG_COUNT <= 20 && (low_byte != 0 || high_byte != 0)) || 
+                   ((low_byte != 0 || high_byte != 0) && PIXEL_DEBUG_COUNT % 1000 == 0) {
+                    debug!("PPU: get_tile_pixel addr=0x{:04X}, px=({},{}), bytes=(0x{:02X},0x{:02X}), bit={}, color={}", 
+                        tile_data_addr, pixel_x, pixel_y, low_byte, high_byte, bit, pixel_color);
+                }
+            }
+        }
         
         pixel_color
     }
@@ -534,7 +620,17 @@ impl Ppu {
             _ => 0,
         };
         
-        // Palette processing working correctly
+        #[cfg(debug_assertions)]
+        {
+            static mut PALETTE_DEBUG_COUNT: u32 = 0;
+            unsafe {
+                PALETTE_DEBUG_COUNT += 1;
+                if PALETTE_DEBUG_COUNT <= 20 {
+                    debug!("PPU: apply_palette color={}, palette=0x{:02X}, final_color={}", 
+                        color, palette, final_color);
+                }
+            }
+        }
         
         final_color
     }
@@ -564,10 +660,20 @@ impl Ppu {
                 let old_bg_window_tiles = self.lcdc.bg_window_tiles;
                 self.lcdc = LcdcFlags::from_byte(value);
                 
-                // Debug LCDC changes during bootstrap
-                if old_bg_window_tiles != self.lcdc.bg_window_tiles {
-                    debug!("LCDC tile addressing changed: bg_window_tiles={} (was {})", 
-                        self.lcdc.bg_window_tiles, old_bg_window_tiles);
+                // When switching from unsigned to signed addressing during bootstrap,
+                // copy tile data from unsigned area to signed area for compatibility
+                if old_bg_window_tiles && !self.lcdc.bg_window_tiles {
+                    // Copy tiles 0x00-0x7F from unsigned area to signed area
+                    for tile_id in 0..0x80 {
+                        let src_addr = tile_id * 16; // Unsigned area offset
+                        let dst_addr = 0x1000 + tile_id * 16; // Signed area offset
+                        
+                        if dst_addr + 16 <= VRAM_SIZE {
+                            for i in 0..16 {
+                                self.vram[dst_addr + i] = self.vram[src_addr + i];
+                            }
+                        }
+                    }
                 }
                 
                 // Handle LCD disable
@@ -609,19 +715,6 @@ impl Ppu {
     pub fn write_vram(&mut self, addr: u16, value: u8) {
         if self.mode == PpuMode::Drawing {
             return; // VRAM inaccessible during drawing
-        }
-        
-        
-        // Debug all VRAM writes during Nintendo logo setup
-        if addr >= 0x8000 && addr <= 0x9FFF && value != 0x00 {
-            static mut VRAM_WRITE_COUNT: u32 = 0;
-            unsafe {
-                VRAM_WRITE_COUNT += 1;
-                if VRAM_WRITE_COUNT <= 50 {
-                    let area = if addr < 0x9800 { "TILES" } else { "TILEMAP" };
-                    debug!("VRAM {}: addr=0x{:04X}, value=0x{:02X}", area, addr, value);
-                }
-            }
         }
         
         self.vram[(addr - 0x8000) as usize] = value;

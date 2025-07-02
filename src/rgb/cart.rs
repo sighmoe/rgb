@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+#[cfg(debug_assertions)]
 use log::debug;
 
 #[derive(Debug)]
@@ -15,6 +16,7 @@ impl Cart {
             eprintln!("Error: {}", e);
             panic!("expected valid file path: {}", e);
         });
+        #[cfg(debug_assertions)]
         debug!("Loaded ROM: {} bytes", buf.len());
         Cart { rom: buf }
     }
