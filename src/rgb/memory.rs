@@ -140,6 +140,12 @@ impl MemoryMap {
             0x8000..=0x9FFF => {
                 self.ppu.write_vram(addr, val);
             }
+            // Cartridge RAM area (0xA000-0xBFFF)
+            0xA000..=0xBFFF => {
+                if let Some(ref mut cart) = self.cart {
+                    cart.write_ram(addr, val);
+                }
+            }
             // OAM (0xFE00-0xFE9F)
             0xFE00..=0xFE9F => {
                 self.ppu.write_oam(addr, val);
@@ -191,6 +197,14 @@ impl MemoryMap {
             0xFF40..=0xFF4B => self.ppu.read_register(addr),
             // VRAM (0x8000-0x9FFF)
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
+            // Cartridge RAM area (0xA000-0xBFFF)
+            0xA000..=0xBFFF => {
+                if let Some(ref cart) = self.cart {
+                    cart.read_ram(addr)
+                } else {
+                    0xFF
+                }
+            }
             // OAM (0xFE00-0xFE9F)
             0xFE00..=0xFE9F => self.ppu.read_oam(addr),
             // Interrupt registers
