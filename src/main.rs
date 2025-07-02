@@ -313,13 +313,18 @@ async fn main() {
         // Get frame buffer from PPU
         let frame_buffer = emulator.get_frame_buffer();
         
-        // Debug: Check if frame buffer is changing and what's changing
+        #[cfg(debug_assertions)]
         static mut LAST_FRAME_HASH: u64 = 0;
+        #[cfg(debug_assertions)]
         static mut FRAME_CHANGE_COUNT: u32 = 0;
+        #[cfg(debug_assertions)]
         static mut LAST_NON_ZERO_COUNT: usize = 0;
+        #[cfg(debug_assertions)]
         static mut LAST_FRAME_BUFFER: Option<Vec<u8>> = None;
         
+        #[cfg(debug_assertions)]
         let non_zero_count = frame_buffer.iter().filter(|&&pixel| pixel != 0).count();
+        #[cfg(debug_assertions)]
         let current_hash = {
             let mut hash = 0u64;
             for (i, &pixel) in frame_buffer.iter().enumerate() {
@@ -334,9 +339,18 @@ async fn main() {
         {
             // Count how many render loops we go through total
             static mut TOTAL_RENDER_LOOPS: u32 = 0;
+            static mut LAST_NON_ZERO_COUNT_DEBUG: usize = 0;
             
             unsafe {
                 TOTAL_RENDER_LOOPS += 1;
+                
+                // Check if pixel count changed even if hash didn't
+                if non_zero_count != LAST_NON_ZERO_COUNT_DEBUG {
+                    LAST_NON_ZERO_COUNT_DEBUG = non_zero_count;
+                    if TOTAL_RENDER_LOOPS % 100 == 0 {
+                        println!("Pixel count changed to {} (no frame hash change) at loop {}", non_zero_count, TOTAL_RENDER_LOOPS);
+                    }
+                }
                 
                 if current_hash != LAST_FRAME_HASH {
                     FRAME_CHANGE_COUNT += 1;
@@ -376,23 +390,25 @@ async fn main() {
                     LAST_NON_ZERO_COUNT = non_zero_count;
                     LAST_FRAME_BUFFER = Some(frame_buffer.to_vec());
                 } else if TOTAL_RENDER_LOOPS % 1000 == 0 {
-                    println!("No frame change for {} total render loops", TOTAL_RENDER_LOOPS);
+                    static mut LAST_PC: u16 = 0;
+                    static mut PC_STUCK_COUNT: u32 = 0;
+                    
+                    let pc = emulator.cpu.pc;
+                    let halted = emulator.cpu.halted;
+                    
+                    if pc == LAST_PC {
+                        PC_STUCK_COUNT += 1;
+                    } else {
+                        PC_STUCK_COUNT = 0;
+                        LAST_PC = pc;
+                    }
+                    
+                    println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}", 
+                        TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count);
                 }
             }
         }
         
-        #[cfg(not(debug_assertions))]
-        {
-            // In release mode, just update the frame buffer tracking without debug output
-            unsafe {
-                if current_hash != LAST_FRAME_HASH {
-                    FRAME_CHANGE_COUNT += 1;
-                    LAST_FRAME_HASH = current_hash;
-                    LAST_NON_ZERO_COUNT = non_zero_count;
-                    LAST_FRAME_BUFFER = Some(frame_buffer.to_vec());
-                }
-            }
-        }
         
 
         // Draw the Game Boy screen (160x144)
@@ -420,22 +436,27 @@ async fn main() {
         }
         
 
-        // Display FPS and emulator info  
+        // Display FPS  
         let fps = get_fps();
-        let pc = emulator.cpu.pc;
-        let halted = emulator.cpu.halted;
-        let ly = emulator.cpu.mmap.read(0xFF44); // Current scanline
-        let lcdc = emulator.cpu.mmap.read(0xFF40); // LCD control
-        let ppu_ly = emulator.cpu.mmap.get_ppu().ly;
-        let ppu_mode = emulator.cpu.mmap.get_ppu().mode;
-        let lcd_enabled = (lcdc & 0x80) != 0;
-        let fps_text = format!("FPS: {:.1} | PC: 0x{:04X} | LY: {} | PPU_LY: {} | LCD: {}", 
-            fps, pc, ly, ppu_ly, lcd_enabled);
+        let fps_text = format!("Game Boy Emulator - FPS: {:.1}", fps);
         draw_text(&fps_text, 10.0, screen_height() - 20.0, 20.0, WHITE);
         
-        unsafe {
-            let changes_text = format!("Frame Changes: {} | LCDC: 0x{:02X} | Halted: {}", FRAME_CHANGE_COUNT, lcdc, halted);
-            draw_text(&changes_text, 10.0, screen_height() - 40.0, 20.0, WHITE);
+        #[cfg(debug_assertions)]
+        {
+            let pc = emulator.cpu.pc;
+            let halted = emulator.cpu.halted;
+            let ly = emulator.cpu.mmap.read(0xFF44); // Current scanline
+            let lcdc = emulator.cpu.mmap.read(0xFF40); // LCD control
+            let ppu_ly = emulator.cpu.mmap.get_ppu().ly;
+            let lcd_enabled = (lcdc & 0x80) != 0;
+            let debug_text = format!("PC: 0x{:04X} | LY: {} | PPU_LY: {} | LCD: {} | Halted: {}", 
+                pc, ly, ppu_ly, lcd_enabled, halted);
+            draw_text(&debug_text, 10.0, screen_height() - 40.0, 16.0, WHITE);
+            
+            unsafe {
+                let changes_text = format!("Frame Changes: {} | LCDC: 0x{:02X}", FRAME_CHANGE_COUNT, lcdc);
+                draw_text(&changes_text, 10.0, screen_height() - 60.0, 16.0, WHITE);
+            }
         }
 
         next_frame().await

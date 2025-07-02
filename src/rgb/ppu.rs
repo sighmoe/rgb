@@ -241,6 +241,8 @@ impl Ppu {
             
             // Render scanline if in visible area
             if self.ly < SCREEN_HEIGHT as u8 {
+                // Scan OAM for sprites on this scanline (needed for Tetris blocks!)
+                self.scan_oam();
                 self.render_scanline();
             }
             
@@ -424,6 +426,9 @@ impl Ppu {
         // Render background
         if self.lcdc.bg_enable {
             self.render_background_line(y);
+        } else {
+            #[cfg(debug_assertions)]
+            debug!("PPU: Background disabled on line {}", y);
         }
 
         // Render window
@@ -507,9 +512,9 @@ impl Ppu {
                 static mut TILE_CHECK_COUNT: u32 = 0;
                 unsafe {
                     TILE_CHECK_COUNT += 1;
-                    if (TILE_CHECK_COUNT <= 10 && tile_id != 0) || (tile_id != 0 && TILE_CHECK_COUNT % 100 == 0) {
-                        debug!("PPU: Non-zero tile at ({},{}) = tile_id: 0x{:02X}, tile_data_addr: 0x{:04X}", 
-                            x, y, tile_id, tile_data_addr);
+                    if (TILE_CHECK_COUNT <= 10 && tile_id == 0x7F) || (tile_id == 0x7F && TILE_CHECK_COUNT % 100 == 0) {
+                        debug!("PPU: Tile 0x7F at ({},{}) = tile_data_addr: 0x{:04X}, bgp: 0x{:02X}", 
+                            x, y, tile_data_addr, self.bgp);
                     }
                 }
             }
@@ -561,6 +566,17 @@ impl Ppu {
 
             let pixel_color = self.get_tile_pixel(tile_data_addr, pixel_x, pixel_y);
             let final_color = self.apply_palette(pixel_color, self.bgp);
+            
+            #[cfg(debug_assertions)]
+            {
+                static mut FB_WRITE_COUNT: u32 = 0;
+                unsafe {
+                    FB_WRITE_COUNT += 1;
+                    if FB_WRITE_COUNT <= 20 && final_color != 0 {
+                        debug!("PPU: Writing non-zero pixel at ({},{}) = {}", x, y, final_color);
+                    }
+                }
+            }
             
             self.frame_buffer[y * SCREEN_WIDTH + x] = final_color;
         }
@@ -662,9 +678,9 @@ impl Ppu {
             static mut PALETTE_DEBUG_COUNT: u32 = 0;
             unsafe {
                 PALETTE_DEBUG_COUNT += 1;
-                if PALETTE_DEBUG_COUNT <= 20 {
-                    debug!("PPU: apply_palette color={}, palette=0x{:02X}, final_color={}", 
-                        color, palette, final_color);
+                if PALETTE_DEBUG_COUNT <= 20 || (PALETTE_DEBUG_COUNT <= 1000 && final_color != 0) {
+                    debug!("PPU: apply_palette color={}, palette=0x{:02X} (bin:{:08b}), final_color={}", 
+                        color, palette, palette, final_color);
                 }
             }
         }
