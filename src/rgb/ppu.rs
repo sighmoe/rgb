@@ -235,44 +235,85 @@ impl Ppu {
 
         self.cycles += cycles;
         
-        // Very simplified timing for smooth gameplay: advance scanline every 100 cycles
-        while self.cycles >= 100 {
-            self.cycles -= 100;
+        // Simplified timing but with proper mode cycling for game compatibility
+        while self.cycles >= 25 { // Smaller cycle chunks for better mode timing
+            self.cycles -= 25;
             
-            // Render scanline if in visible area
-            if self.ly < SCREEN_HEIGHT as u8 {
-                // Scan OAM for sprites on this scanline (needed for Tetris blocks!)
-                self.scan_oam();
-                self.render_scanline();
-            }
-            
-            // Advance to next scanline
-            self.ly += 1;
-            self.update_lyc_flag();
-            
-            // Check for VBlank entry (every frame guaranteed)
-            if self.ly == SCREEN_HEIGHT as u8 {
-                // Enter VBlank and trigger interrupt
-                self.mode = PpuMode::VBlank;
-                self.stat.mode = PpuMode::VBlank;
-                self.vblank_interrupt = true;
+            // Handle different PPU modes with simplified timing
+            match self.mode {
+                PpuMode::OamScan => {
+                    // OAM scan for current scanline
+                    if self.ly < SCREEN_HEIGHT as u8 {
+                        self.scan_oam();
+                    }
+                    
+                    // Quick transition to Drawing mode
+                    self.mode = PpuMode::Drawing;
+                    self.stat.mode = PpuMode::Drawing;
+                }
                 
-                #[cfg(debug_assertions)]
-                {
-                    static mut VBLANK_PPU_COUNT: u32 = 0;
-                    unsafe {
-                        VBLANK_PPU_COUNT += 1;
-                        if VBLANK_PPU_COUNT <= 10 || VBLANK_PPU_COUNT % 60 == 0 {
-                            debug!("PPU: VBlank #{} - Frame complete at LY={}", VBLANK_PPU_COUNT, self.ly);
+                PpuMode::Drawing => {
+                    // Render the current scanline if in visible area
+                    if self.ly < SCREEN_HEIGHT as u8 {
+                        self.render_scanline();
+                        
+                        #[cfg(debug_assertions)]
+                        {
+                            static mut RENDER_COUNT: u32 = 0;
+                            unsafe {
+                                RENDER_COUNT += 1;
+                                if RENDER_COUNT % 2000 == 0 {
+                                    debug!("PPU: Still rendering scanlines, count: {}, LY: {}", RENDER_COUNT, self.ly);
+                                }
+                            }
                         }
                     }
+                    
+                    // Transition to HBlank
+                    self.mode = PpuMode::HBlank;
+                    self.stat.mode = PpuMode::HBlank;
                 }
-            }
-            // Reset after VBlank period (keep it short for responsiveness)
-            else if self.ly >= 150 {
-                self.ly = 0;
-                self.mode = PpuMode::OamScan;
-                self.stat.mode = PpuMode::OamScan;
+                
+                PpuMode::HBlank => {
+                    // Complete the scanline and advance
+                    self.ly += 1;
+                    self.update_lyc_flag();
+                    
+                    // Check for VBlank entry
+                    if self.ly == SCREEN_HEIGHT as u8 {
+                        self.mode = PpuMode::VBlank;
+                        self.stat.mode = PpuMode::VBlank;
+                        self.vblank_interrupt = true;
+                        
+                        #[cfg(debug_assertions)]
+                        {
+                            static mut VBLANK_PPU_COUNT: u32 = 0;
+                            unsafe {
+                                VBLANK_PPU_COUNT += 1;
+                                if VBLANK_PPU_COUNT <= 10 || VBLANK_PPU_COUNT % 60 == 0 {
+                                    debug!("PPU: VBlank #{} - Frame complete at LY={}", VBLANK_PPU_COUNT, self.ly);
+                                }
+                            }
+                        }
+                    } else {
+                        // Continue to next scanline
+                        self.mode = PpuMode::OamScan;
+                        self.stat.mode = PpuMode::OamScan;
+                    }
+                }
+                
+                PpuMode::VBlank => {
+                    // Advance through VBlank lines
+                    self.ly += 1;
+                    self.update_lyc_flag();
+                    
+                    // Reset after VBlank period (keep it short for responsiveness)
+                    if self.ly >= 150 {
+                        self.ly = 0;
+                        self.mode = PpuMode::OamScan;
+                        self.stat.mode = PpuMode::OamScan;
+                    }
+                }
             }
         }
     }

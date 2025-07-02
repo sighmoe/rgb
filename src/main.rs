@@ -396,6 +396,17 @@ async fn main() {
                     let pc = emulator.cpu.pc;
                     let halted = emulator.cpu.halted;
                     
+                    // Read the instruction at current PC to see what's happening
+                    let opcode = emulator.cpu.mmap.read(pc);
+                    let next_byte = emulator.cpu.mmap.read(pc.wrapping_add(1));
+                    
+                    // If this is the LCD status polling loop, check what we're reading
+                    let stat_value = if opcode == 0xF0 && next_byte == 0x41 {
+                        Some(emulator.cpu.mmap.read(0xFF41))
+                    } else {
+                        None
+                    };
+                    
                     if pc == LAST_PC {
                         PC_STUCK_COUNT += 1;
                     } else {
@@ -403,8 +414,13 @@ async fn main() {
                         LAST_PC = pc;
                     }
                     
-                    println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}", 
-                        TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count);
+                    if let Some(stat) = stat_value {
+                        println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}, Opcode: 0x{:02X} 0x{:02X}, STAT: 0x{:02X} (mode: {})", 
+                            TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count, opcode, next_byte, stat, stat & 0x03);
+                    } else {
+                        println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}, Opcode: 0x{:02X} 0x{:02X}", 
+                            TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count, opcode, next_byte);
+                    }
                 }
             }
         }
