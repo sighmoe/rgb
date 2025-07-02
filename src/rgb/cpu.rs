@@ -1,8 +1,7 @@
-use crate::rgb::instructions::{Instruction, InstructionKind, ArgKind, decode_instruction, get_instruction_size, decode_cb_instruction, get_cb_instruction_size, JumpCondition};
+use crate::rgb::instructions::{Instruction, InstructionKind, decode_instruction, get_instruction_size, decode_cb_instruction, get_cb_instruction_size, JumpCondition};
 use crate::rgb::instruction_timing::get_instruction_cycles;
 use crate::rgb::memory::MemoryMap;
 use crate::rgb::registers::Registers;
-use crate::rgb::execution;
 
 // Interrupt vector addresses
 const VBLANK_VECTOR: u16 = 0x0040;
@@ -258,7 +257,8 @@ impl Cpu {
         self.sp = self.sp.wrapping_add(1);
         let high = self.mmap.read(self.sp) as u16;
         self.sp = self.sp.wrapping_add(1);
-        (high << 8) | low
+        let result = (high << 8) | low;
+        result
     }
     
     // Interrupt handling methods
@@ -267,6 +267,15 @@ impl Cpu {
             return false;
         }
         
+        let ie = self.mmap.read(IE_REGISTER);
+        let if_reg = self.mmap.read(IF_REGISTER);
+        let pending = ie & if_reg & 0x1F; // Only check lower 5 bits
+        
+        pending != 0
+    }
+    
+    // Check for pending interrupts regardless of IME (for HALT bug)
+    pub fn check_pending_interrupts(&mut self) -> bool {
         let ie = self.mmap.read(IE_REGISTER);
         let if_reg = self.mmap.read(IF_REGISTER);
         let pending = ie & if_reg & 0x1F; // Only check lower 5 bits
@@ -286,6 +295,7 @@ impl Cpu {
         if pending == 0 {
             return 0;
         }
+        
         
         // Find highest priority interrupt (lowest bit number)
         let interrupt_bit = if pending & (1 << VBLANK_BIT) != 0 {
@@ -316,7 +326,7 @@ impl Cpu {
         self.push_stack(self.pc);
         
         // Jump to interrupt vector
-        self.pc = match interrupt_bit {
+        let vector = match interrupt_bit {
             VBLANK_BIT => VBLANK_VECTOR,
             LCD_STAT_BIT => LCD_STAT_VECTOR,
             TIMER_BIT => TIMER_VECTOR,
@@ -324,6 +334,9 @@ impl Cpu {
             JOYPAD_BIT => JOYPAD_VECTOR,
             _ => unreachable!(),
         };
+        
+        
+        self.pc = vector;
         
         // Interrupt handling takes 5 M-cycles (20 T-cycles)
         20

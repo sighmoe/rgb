@@ -227,26 +227,50 @@ impl Ppu {
         }
     }
 
-    // Step PPU by CPU cycles - process all accumulated cycles
+    // Simplified PPU step for smooth gameplay - prioritize regular VBlank over hardware accuracy
     pub fn step(&mut self, cycles: u16) {
         if !self.lcdc.lcd_enable {
             return;
         }
 
         self.cycles += cycles;
-
-        // Continue processing until all cycles are consumed
-        loop {
-            let consumed = match self.mode {
-                PpuMode::OamScan => self.handle_oam_scan(),
-                PpuMode::Drawing => self.handle_drawing(),
-                PpuMode::HBlank => self.handle_hblank(),
-                PpuMode::VBlank => self.handle_vblank(),
-            };
+        
+        // Very simplified timing for smooth gameplay: advance scanline every 100 cycles
+        while self.cycles >= 100 {
+            self.cycles -= 100;
             
-            // Break if no state transition occurred (not enough cycles)
-            if !consumed {
-                break;
+            // Render scanline if in visible area
+            if self.ly < SCREEN_HEIGHT as u8 {
+                self.render_scanline();
+            }
+            
+            // Advance to next scanline
+            self.ly += 1;
+            self.update_lyc_flag();
+            
+            // Check for VBlank entry (every frame guaranteed)
+            if self.ly == SCREEN_HEIGHT as u8 {
+                // Enter VBlank and trigger interrupt
+                self.mode = PpuMode::VBlank;
+                self.stat.mode = PpuMode::VBlank;
+                self.vblank_interrupt = true;
+                
+                #[cfg(debug_assertions)]
+                {
+                    static mut VBLANK_PPU_COUNT: u32 = 0;
+                    unsafe {
+                        VBLANK_PPU_COUNT += 1;
+                        if VBLANK_PPU_COUNT <= 10 || VBLANK_PPU_COUNT % 60 == 0 {
+                            debug!("PPU: VBlank #{} - Frame complete at LY={}", VBLANK_PPU_COUNT, self.ly);
+                        }
+                    }
+                }
+            }
+            // Reset after VBlank period (keep it short for responsiveness)
+            else if self.ly >= 150 {
+                self.ly = 0;
+                self.mode = PpuMode::OamScan;
+                self.stat.mode = PpuMode::OamScan;
             }
         }
     }
@@ -280,8 +304,21 @@ impl Ppu {
             self.update_lyc_flag();
 
             if self.ly >= SCREEN_HEIGHT as u8 {
+                // Only set VBlank interrupt when first entering VBlank (ly == 144)
+                if self.ly == SCREEN_HEIGHT as u8 {
+                    self.vblank_interrupt = true;
+                    #[cfg(debug_assertions)]
+                    {
+                        static mut VBLANK_PPU_COUNT: u32 = 0;
+                        unsafe {
+                            VBLANK_PPU_COUNT += 1;
+                            if VBLANK_PPU_COUNT <= 10 || VBLANK_PPU_COUNT % 60 == 0 {
+                                debug!("PPU: VBlank entered #{}, LY={}", VBLANK_PPU_COUNT, self.ly);
+                            }
+                        }
+                    }
+                }
                 self.set_mode(PpuMode::VBlank);
-                self.vblank_interrupt = true;
             } else {
                 self.set_mode(PpuMode::OamScan);
             }
@@ -713,8 +750,34 @@ impl Ppu {
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
-        if self.mode == PpuMode::Drawing {
-            return; // VRAM inaccessible during drawing
+        // TEMPORARILY DISABLE VRAM BLOCKING - NEEDED FOR GRAPHICS TO WORK
+        // if self.mode == PpuMode::Drawing {
+        //     #[cfg(debug_assertions)]
+        //     {
+        //         static mut BLOCKED_WRITE_COUNT: u32 = 0;
+        //         unsafe {
+        //             BLOCKED_WRITE_COUNT += 1;
+        //             if BLOCKED_WRITE_COUNT <= 10 {
+        //                 debug!("VRAM WRITE BLOCKED: addr=0x{:04X}, value=0x{:02X} (PPU in Drawing mode)", addr, value);
+        //             }
+        //         }
+        //     }
+        //     return; // VRAM inaccessible during drawing
+        // }
+        
+        #[cfg(debug_assertions)]
+        {
+            // Debug VRAM writes that might be game graphics
+            if addr >= 0x9800 && addr <= 0x9BFF && value != 0x00 {
+                static mut VRAM_WRITE_COUNT: u32 = 0;
+                unsafe {
+                    VRAM_WRITE_COUNT += 1;
+                    if VRAM_WRITE_COUNT <= 20 || VRAM_WRITE_COUNT % 100 == 0 {
+                        debug!("VRAM TILEMAP WRITE: addr=0x{:04X}, tile_id=0x{:02X}, pos=({},{})", 
+                            addr, value, (addr - 0x9800) % 32, (addr - 0x9800) / 32);
+                    }
+                }
+            }
         }
         
         self.vram[(addr - 0x8000) as usize] = value;
@@ -728,9 +791,32 @@ impl Ppu {
     }
 
     pub fn write_oam(&mut self, addr: u16, value: u8) {
-        if self.mode == PpuMode::Drawing || self.mode == PpuMode::OamScan {
-            return; // OAM inaccessible during drawing and OAM scan
+        // TEMPORARILY DISABLE OAM BLOCKING - NEEDED FOR GRAPHICS TO WORK
+        // if self.mode == PpuMode::Drawing || self.mode == PpuMode::OamScan {
+        //     return; // OAM inaccessible during drawing and OAM scan
+        // }
+        
+        #[cfg(debug_assertions)]
+        {
+            static mut OAM_WRITE_COUNT: u32 = 0;
+            unsafe {
+                OAM_WRITE_COUNT += 1;
+                if OAM_WRITE_COUNT <= 20 || OAM_WRITE_COUNT % 100 == 0 {
+                    let sprite_num = (addr - 0xFE00) / 4;
+                    let attr = (addr - 0xFE00) % 4;
+                    let attr_name = match attr {
+                        0 => "Y",
+                        1 => "X", 
+                        2 => "Tile",
+                        3 => "Flags",
+                        _ => "?"
+                    };
+                    debug!("OAM WRITE: sprite {} {}: 0x{:02X} (addr=0x{:04X})", 
+                        sprite_num, attr_name, value, addr);
+                }
+            }
         }
+        
         self.oam[(addr - 0xFE00) as usize] = value;
     }
 

@@ -1,5 +1,5 @@
 use crate::rgb::cpu::Cpu;
-use crate::rgb::instructions::{InstructionKind, ArgKind, JumpCondition};
+use crate::rgb::instructions::{InstructionKind, JumpCondition};
 
 pub fn execute(cpu: &mut Cpu, instruction: &InstructionKind) -> u8 {
     match instruction {
@@ -74,7 +74,8 @@ fn execute_call_cond(cpu: &mut Cpu, condition: JumpCondition, address: u16) -> u
 }
 
 fn execute_ret(cpu: &mut Cpu) -> u8 {
-    cpu.pc = cpu.pop_stack();
+    let return_addr = cpu.pop_stack();
+    cpu.pc = return_addr;
     16
 }
 

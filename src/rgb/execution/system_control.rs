@@ -30,7 +30,7 @@ fn execute_nop() -> u8 {
 fn execute_halt(cpu: &mut Cpu) -> u8 {
     // Game Boy HALT bug: if IME is false but interrupts are pending,
     // don't halt and cause next instruction to execute twice
-    if !cpu.ime && cpu.check_interrupts() {
+    if !cpu.ime && cpu.check_pending_interrupts() {
         #[cfg(debug_assertions)]
         {
             use log::debug;
@@ -39,6 +39,11 @@ fn execute_halt(cpu: &mut Cpu) -> u8 {
         cpu.halt_bug = true;
     } else {
         cpu.halted = true;
+        #[cfg(debug_assertions)]
+        {
+            use log::debug;
+            debug!("CPU halted at PC=0x{:04X}, IME={}", cpu.pc - 1, cpu.ime);
+        }
     }
     4
 }
