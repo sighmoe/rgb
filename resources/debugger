@@ -1,0 +1,8 @@
+Let's write a debugger for our emulator. This debugger will allow us to step one instruction
+at a time or provide an integer value of instructions to execute for convienence. It should allow
+us to observe values in registers, and given a memory location show the contents at that address.
+
+Ideally everything debugger related should be in its own crate but it can be imported and hooked
+into our emulator at the main loop. The debugger should take in an optional flag for it to be ran.
+
+Ideally we will have a seperate gui window for our debugger with buttons to step and a view of registers.

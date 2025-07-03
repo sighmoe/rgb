@@ -4,6 +4,7 @@ use macroquad::prelude::*;
 use rgb::cpu::Cpu;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use debugger::{Debugger, DebuggerUI};
 
 struct GameBoyEmulator {
     cpu: Cpu,
@@ -13,10 +14,12 @@ struct GameBoyEmulator {
     trace_json: bool,
     #[cfg(debug_assertions)]
     instruction_count: u64,
+    debugger: Option<Debugger>,
+    debugger_ui: Option<DebuggerUI>,
 }
 
 impl GameBoyEmulator {
-    fn new(rom_path: &str, skip_boot_rom: bool, trace_file: Option<String>, trace_json: bool) -> Self {
+    fn new(rom_path: &str, skip_boot_rom: bool, trace_file: Option<String>, trace_json: bool, enable_debugger: bool) -> Self {
         let mut cpu = if skip_boot_rom {
             Cpu::new_post_boot()
         } else {
@@ -56,6 +59,12 @@ impl GameBoyEmulator {
             None
         };
         
+        let (debugger, debugger_ui) = if enable_debugger {
+            (Some(Debugger::new()), Some(DebuggerUI::new()))
+        } else {
+            (None, None)
+        };
+        
         Self { 
             cpu,
             #[cfg(debug_assertions)]
@@ -64,6 +73,8 @@ impl GameBoyEmulator {
             trace_json,
             #[cfg(debug_assertions)]
             instruction_count: 0,
+            debugger,
+            debugger_ui,
         }
     }
     
@@ -169,6 +180,7 @@ async fn main() {
     let mut skip_boot_rom = false;
     let mut trace_file: Option<String> = None;
     let mut trace_json = false;
+    let mut enable_debugger = false;
     
     let mut i = 1;
     while i < args.len() {
@@ -189,6 +201,10 @@ async fn main() {
                 trace_json = true;
                 i += 1;
             }
+            "--debug" | "-d" => {
+                enable_debugger = true;
+                i += 1;
+            }
             "--help" | "-h" => {
                 println!("Game Boy Emulator");
                 println!("Usage: {} [options] [rom_path]", args[0]);
@@ -197,6 +213,7 @@ async fn main() {
                 println!("  --skip-boot, -s      Skip the Game Boy boot sequence and start directly with the ROM");
                 println!("  --trace, -t <file>   Write execution trace to the specified file");
                 println!("  --trace-json         Format trace output as JSON (requires --trace)");
+                println!("  --debug, -d          Enable interactive debugger");
                 println!("  --help, -h           Show this help message");
                 println!();
                 println!("Debug tracing is only available in debug builds.");
@@ -221,7 +238,7 @@ async fn main() {
         return;
     }
     
-    let mut emulator = GameBoyEmulator::new(rom_path, skip_boot_rom, trace_file, trace_json);
+    let mut emulator = GameBoyEmulator::new(rom_path, skip_boot_rom, trace_file, trace_json, enable_debugger);
     
     
     loop {
@@ -251,6 +268,45 @@ async fn main() {
         let instructions_per_frame = 4000; // Higher count for better performance
         
         for _ in 0..instructions_per_frame {
+            // Handle debugger logic
+            if let Some(ref mut debugger) = emulator.debugger {
+                // Update CPU snapshot for debugger display
+                if let Some(ref mut ui) = emulator.debugger_ui {
+                    ui.update_cpu_snapshot(
+                        debugger,
+                        emulator.cpu.registers.a,
+                        emulator.cpu.registers.b,
+                        emulator.cpu.registers.c,
+                        emulator.cpu.registers.d,
+                        emulator.cpu.registers.e,
+                        u8::from(emulator.cpu.registers.f),
+                        emulator.cpu.registers.h,
+                        emulator.cpu.registers.l,
+                        emulator.cpu.pc,
+                        emulator.cpu.sp,
+                        emulator.cpu.ime,
+                        emulator.cpu.halted,
+                        emulator.cpu.registers.f.zero,
+                        emulator.cpu.registers.f.subtract,
+                        emulator.cpu.registers.f.half_carry,
+                        emulator.cpu.registers.f.carry,
+                    );
+                }
+                
+                // Check for breakpoints
+                if debugger.check_breakpoint(emulator.cpu.pc) {
+                    debugger.pause();
+                }
+                
+                // Check if we should execute this instruction
+                if !debugger.should_execute() {
+                    break; // Exit instruction loop if debugger is paused
+                }
+                
+                // Update memory watches
+                debugger.update_memory_watches(|addr| emulator.cpu.mmap.read(addr));
+            }
+            
             if emulator.cpu.halted {
                 // When halted, still step the hardware
                 let halt_cycles = 4u16;
@@ -288,6 +344,11 @@ async fn main() {
             } else {
                 // Execute one instruction
                 let instruction = emulator.cpu.decode();
+                
+                // Record instruction in debugger
+                if let Some(ref mut debugger) = emulator.debugger {
+                    debugger.record_instruction(emulator.cpu.pc, instruction.instr);
+                }
                 
                 // Save opcode for debugging after execution
                 #[cfg(debug_assertions)]
@@ -561,6 +622,12 @@ async fn main() {
                 let changes_text = format!("Frame Changes: {} | LCDC: 0x{:02X}", FRAME_CHANGE_COUNT, lcdc);
                 draw_text(&changes_text, 10.0, screen_height() - 60.0, 16.0, WHITE);
             }
+        }
+
+        // Handle debugger UI
+        if let (Some(ref mut debugger), Some(ref mut debugger_ui)) = (&mut emulator.debugger, &mut emulator.debugger_ui) {
+            debugger_ui.handle_input();
+            debugger_ui.draw(debugger);
         }
 
         next_frame().await
