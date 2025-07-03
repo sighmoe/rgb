@@ -79,29 +79,11 @@ impl MemoryMap {
         self.contents[0xFF50] = 0x01; // Bootstrap ROM disabled
     }
     
-    /// Initialize VRAM with tile graphics data that games expect after boot ROM completion
+    /// Initialize VRAM for post-boot state
+    /// The boot ROM would normally initialize some tile data, but games are expected
+    /// to handle their own graphics loading
     fn init_post_boot_vram(&mut self) {
-        // The boot ROM loads standard tile graphics data to VRAM that many games depend on
-        // Pokemon specifically expects tile graphics at 0x8000+ range to be available
-        
-        // Create a simple tile pattern that Pokemon can use for tile ID 0x7F
-        // This is a basic 8x8 tile with some pattern instead of all zeros
-        let basic_tile_data = [
-            0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,  // Row pattern
-            0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00,  // Row pattern  
-        ];
-        
-        // Pokemon uses tile ID 0x7F in signed mode, which maps to:
-        // 0x9000 + (127 * 16) = 0x97F0 (VRAM offset 0x17F0)
-        let tile_addr = 0x17F0;
-        
-        // Copy tile data to VRAM  
-        for (i, &byte) in basic_tile_data.iter().enumerate() {
-            if tile_addr + i < 0x2000 {  // Ensure within VRAM bounds
-                self.ppu.vram[tile_addr + i] = byte;
-            }
-        }
-        
+        // VRAM is initialized to zero by default - games handle their own tile loading
     }
     
     /// Disables the bootstrap ROM, allowing cartridge access to 0x0000-0x00FF
@@ -170,26 +152,6 @@ impl MemoryMap {
             }
             // Regular memory
             _ => {
-                #[cfg(debug_assertions)]
-                {
-                    // Debug Pokemon's writes to HRAM variables
-                    if addr == 0xFFD0 {
-                        static mut FFD0_WRITE_COUNT: u32 = 0;
-                        unsafe {
-                            FFD0_WRITE_COUNT += 1;
-                            let old_val = self.contents[addr as usize];
-                            println!("Pokemon writing to 0xFFD0: {} -> {} (write #{})", old_val, val, FFD0_WRITE_COUNT);
-                        }
-                    } else if addr >= 0xFFD1 && addr <= 0xFFDF {
-                        static mut HRAM_WRITE_COUNT: u32 = 0;
-                        unsafe {
-                            HRAM_WRITE_COUNT += 1;
-                            if HRAM_WRITE_COUNT <= 20 || val != 0 {
-                                println!("Writing 0x{:02X} to 0x{:04X} (Pokemon HRAM), write #{}", val, addr, HRAM_WRITE_COUNT);
-                            }
-                        }
-                    }
-                }
                 self.contents[addr as usize] = val;
             }
         }
@@ -239,19 +201,6 @@ impl MemoryMap {
             }
             // Regular memory
             _ => {
-                #[cfg(debug_assertions)]
-                {
-                    // Debug Pokemon's access to HRAM variables
-                    if addr == 0xFFD0 && self.contents[addr as usize] == 0 {
-                        static mut D0_READ_COUNT: u32 = 0;
-                        unsafe {
-                            D0_READ_COUNT += 1;
-                            if D0_READ_COUNT <= 10 {
-                                println!("Reading 0x00 from 0xFFD0 (Pokemon hSavedMapTextPtr), read #{}", D0_READ_COUNT);
-                            }
-                        }
-                    }
-                }
                 self.contents[addr as usize]
             }
         };
@@ -314,18 +263,6 @@ impl MemoryMap {
         let vblank_interrupt = self.ppu.vblank_interrupt;
         let stat_interrupt = self.ppu.stat_interrupt;
         
-        // Pokemon's VBlank interrupt handler should set the redraw flag, not us directly
-        // Let's just track VBlank occurrences for now
-        #[cfg(debug_assertions)]
-        if vblank_interrupt {
-            static mut VBLANK_TRACK_COUNT: u32 = 0;
-            unsafe {
-                VBLANK_TRACK_COUNT += 1;
-                if VBLANK_TRACK_COUNT <= 5 || VBLANK_TRACK_COUNT % 60 == 0 {
-                    println!("PPU: VBlank interrupt #{} - Pokemon should handle this", VBLANK_TRACK_COUNT);
-                }
-            }
-        }
         
         // Clear PPU interrupt flags after reading them
         self.ppu.vblank_interrupt = false;

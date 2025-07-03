@@ -240,9 +240,9 @@ impl Ppu {
 
         self.cycles += cycles;
         
-        // Process in larger chunks for better performance (114 cycles = 1 scanline)
-        while self.cycles >= 114 {
-            self.cycles -= 114;
+        // Process in proper Game Boy chunks (456 cycles = 1 scanline)
+        while self.cycles >= 456 {
+            self.cycles -= 456;
             
             // Execute one complete scanline
             match self.ly {
@@ -330,16 +330,6 @@ impl Ppu {
                 // Only set VBlank interrupt when first entering VBlank (ly == 144)
                 if self.ly == SCREEN_HEIGHT as u8 {
                     self.vblank_interrupt = true;
-                    #[cfg(debug_assertions)]
-                    {
-                        static mut VBLANK_PPU_COUNT: u32 = 0;
-                        unsafe {
-                            VBLANK_PPU_COUNT += 1;
-                            if VBLANK_PPU_COUNT <= 10 || VBLANK_PPU_COUNT % 60 == 0 {
-                                debug!("PPU: VBlank entered #{}, LY={}", VBLANK_PPU_COUNT, self.ly);
-                            }
-                        }
-                    }
                 }
                 self.set_mode(PpuMode::VBlank);
             } else {
@@ -419,17 +409,6 @@ impl Ppu {
             return;
         }
 
-        #[cfg(debug_assertions)]
-        {
-            static mut RENDER_DEBUG_COUNT: u32 = 0;
-            unsafe {
-                RENDER_DEBUG_COUNT += 1;
-                if RENDER_DEBUG_COUNT <= 5 || RENDER_DEBUG_COUNT % 1000 == 0 {
-                    debug!("PPU: Rendering scanline {}, bg_enable: {}, window_enable: {}, sprite_enable: {}", 
-                        y, self.lcdc.bg_enable, self.lcdc.window_enable, self.lcdc.sprite_enable);
-                }
-            }
-        }
 
 
         // Render background
@@ -452,16 +431,6 @@ impl Ppu {
     }
 
     fn render_background_line(&mut self, y: usize) {
-        #[cfg(debug_assertions)]
-        {
-            static mut BG_DEBUG_COUNT: u32 = 0;
-            unsafe {
-                BG_DEBUG_COUNT += 1;
-                if BG_DEBUG_COUNT <= 3 || BG_DEBUG_COUNT % 1000 == 0 {
-                    debug!("PPU: Rendering background line {}, SCY: {}, SCX: {}", y, self.scy, self.scx);
-                }
-            }
-        }
         
         let scroll_y = self.scy.wrapping_add(y as u8) as usize;
         let tile_y = scroll_y / TILE_SIZE;
@@ -492,46 +461,13 @@ impl Ppu {
                 };
                 let addr = (0x1000_i16 + signed_tile_id * 16) as usize;
                 
-                #[cfg(debug_assertions)]
-                {
-                    static mut TILE_DEBUG_COUNT: u32 = 0;
-                    unsafe {
-                        TILE_DEBUG_COUNT += 1;
-                        if TILE_DEBUG_COUNT <= 5 {
-                            debug!("TILE ADDR DEBUG: tile_id=0x{:02X}, signed={}, addr=0x{:04X} (VRAM offset)", 
-                                tile_id, signed_tile_id, addr);
-                            
-                            // Check if address is within VRAM bounds and what data exists there
-                            if addr < VRAM_SIZE {
-                                let end_addr = (addr + 16).min(VRAM_SIZE);
-                                let tile_data = &self.vram[addr..end_addr];
-                                debug!("TILE DATA at 0x{:04X}: {:02X?}", addr, &tile_data[0..tile_data.len().min(8)]);
-                            } else {
-                                debug!("TILE ADDR OUT OF BOUNDS! addr=0x{:04X}, VRAM size = 0x{:04X}", addr, VRAM_SIZE);
-                            }
-                        }
-                    }
-                }
                 
                 addr
             };
             
-            #[cfg(debug_assertions)]
-            {
-                static mut TILE_CHECK_COUNT: u32 = 0;
-                unsafe {
-                    TILE_CHECK_COUNT += 1;
-                    if (TILE_CHECK_COUNT <= 10 && tile_id == 0x7F) || (tile_id == 0x7F && TILE_CHECK_COUNT % 100 == 0) {
-                        debug!("PPU: Tile 0x7F at ({},{}) = tile_data_addr: 0x{:04X}, bgp: 0x{:02X}", 
-                            x, y, tile_data_addr, self.bgp);
-                    }
-                }
-            }
 
             let pixel_color = self.get_tile_pixel(tile_data_addr, pixel_x, pixel_y);
             let final_color = self.apply_palette(pixel_color, self.bgp);
-            
-            // Removed frame buffer debug for performance
             
             self.frame_buffer[y * SCREEN_WIDTH + x] = final_color;
         }
@@ -566,8 +502,6 @@ impl Ppu {
 
             let pixel_color = self.get_tile_pixel(tile_data_addr, pixel_x, pixel_y);
             let final_color = self.apply_palette(pixel_color, self.bgp);
-            
-            // Removed frame buffer debug for performance
             
             self.frame_buffer[y * SCREEN_WIDTH + x] = final_color;
         }
@@ -638,19 +572,6 @@ impl Ppu {
         
         let pixel_color = (high_bit << 1) | low_bit;
         
-        #[cfg(debug_assertions)]
-        {
-            static mut PIXEL_DEBUG_COUNT: u32 = 0;
-            unsafe {
-                PIXEL_DEBUG_COUNT += 1;
-                if tile_data_addr == 0x07F0 || // Tile 0x7F in signed mode
-                   (PIXEL_DEBUG_COUNT <= 20 && (low_byte != 0 || high_byte != 0)) || 
-                   ((low_byte != 0 || high_byte != 0) && PIXEL_DEBUG_COUNT % 1000 == 0) {
-                    debug!("PPU: get_tile_pixel addr=0x{:04X}, px=({},{}), bytes=(0x{:02X},0x{:02X}), bit={}, color={}", 
-                        tile_data_addr, pixel_x, pixel_y, low_byte, high_byte, bit, pixel_color);
-                }
-            }
-        }
         
         pixel_color
     }
@@ -664,17 +585,6 @@ impl Ppu {
             _ => 0,
         };
         
-        #[cfg(debug_assertions)]
-        {
-            static mut PALETTE_DEBUG_COUNT: u32 = 0;
-            unsafe {
-                PALETTE_DEBUG_COUNT += 1;
-                if PALETTE_DEBUG_COUNT <= 20 || (PALETTE_DEBUG_COUNT <= 1000 && final_color != 0) {
-                    debug!("PPU: apply_palette color={}, palette=0x{:02X} (bin:{:08b}), final_color={}", 
-                        color, palette, palette, final_color);
-                }
-            }
-        }
         
         final_color
     }
@@ -772,20 +682,6 @@ impl Ppu {
         //     return; // VRAM inaccessible during drawing
         // }
         
-        #[cfg(debug_assertions)]
-        {
-            // Debug VRAM writes that might be game graphics
-            if addr >= 0x9800 && addr <= 0x9BFF && value != 0x00 {
-                static mut VRAM_WRITE_COUNT: u32 = 0;
-                unsafe {
-                    VRAM_WRITE_COUNT += 1;
-                    if VRAM_WRITE_COUNT <= 20 || VRAM_WRITE_COUNT % 100 == 0 {
-                        debug!("VRAM TILEMAP WRITE: addr=0x{:04X}, tile_id=0x{:02X}, pos=({},{})", 
-                            addr, value, (addr - 0x9800) % 32, (addr - 0x9800) / 32);
-                    }
-                }
-            }
-        }
         
         self.vram[(addr - 0x8000) as usize] = value;
     }
@@ -803,26 +699,6 @@ impl Ppu {
         //     return; // OAM inaccessible during drawing and OAM scan
         // }
         
-        #[cfg(debug_assertions)]
-        {
-            static mut OAM_WRITE_COUNT: u32 = 0;
-            unsafe {
-                OAM_WRITE_COUNT += 1;
-                if OAM_WRITE_COUNT <= 20 || OAM_WRITE_COUNT % 100 == 0 {
-                    let sprite_num = (addr - 0xFE00) / 4;
-                    let attr = (addr - 0xFE00) % 4;
-                    let attr_name = match attr {
-                        0 => "Y",
-                        1 => "X", 
-                        2 => "Tile",
-                        3 => "Flags",
-                        _ => "?"
-                    };
-                    debug!("OAM WRITE: sprite {} {}: 0x{:02X} (addr=0x{:04X})", 
-                        sprite_num, attr_name, value, addr);
-                }
-            }
-        }
         
         self.oam[(addr - 0xFE00) as usize] = value;
     }
@@ -853,16 +729,6 @@ impl Ppu {
             self.mode = new_mode;
             self.stat.mode = new_mode;
             
-            #[cfg(debug_assertions)]
-            {
-                static mut MODE_CHANGE_COUNT: u32 = 0;
-                unsafe {
-                    MODE_CHANGE_COUNT += 1;
-                    if MODE_CHANGE_COUNT <= 5 {
-                        debug!("PPU: Mode changed to {:?} at LY={}", new_mode, self.ly);
-                    }
-                }
-            }
         }
     }
     
@@ -874,17 +740,6 @@ impl Ppu {
         if stat_line && !self.prev_stat_line {
             self.stat_interrupt = true;
             
-            #[cfg(debug_assertions)]
-            {
-                static mut STAT_INT_COUNT: u32 = 0;
-                unsafe {
-                    STAT_INT_COUNT += 1;
-                    if STAT_INT_COUNT <= 3 {
-                        debug!("PPU: STAT interrupt triggered #{} at LY={}, mode={:?}", 
-                            STAT_INT_COUNT, self.ly, self.mode);
-                    }
-                }
-            }
         }
         
         self.prev_stat_line = stat_line;

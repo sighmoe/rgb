@@ -47,7 +47,7 @@ pub struct Debugger {
 impl Debugger {
     pub fn new() -> Self {
         Self {
-            state: DebuggerState::Paused,
+            state: DebuggerState::Running, // Start running by default
             step_count: 0,
             instructions_to_run: None,
             current_snapshot: None,
