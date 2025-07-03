@@ -124,9 +124,25 @@ impl Cart {
             0x4000..=0x7FFF => {
                 let bank_offset = addr - 0x4000;
                 let rom_addr = (self.rom_bank as usize * 0x4000) + bank_offset as usize;
+                
+                #[cfg(debug_assertions)]
+                {
+                    static mut ROM_READ_COUNT: u32 = 0;
+                    unsafe {
+                        ROM_READ_COUNT += 1;
+                        if ROM_READ_COUNT <= 20 && addr == 0x4000 {
+                            println!("Reading from ROM bank {} at 0x{:04X} -> ROM addr 0x{:06X}", 
+                                self.rom_bank, addr, rom_addr);
+                        }
+                    }
+                }
+                
                 if rom_addr < self.rom.len() {
                     self.rom[rom_addr]
                 } else {
+                    #[cfg(debug_assertions)]
+                    println!("ROM read beyond bounds: bank {} addr 0x{:04X} -> ROM addr 0x{:06X} (ROM size: 0x{:06X})", 
+                        self.rom_bank, addr, rom_addr, self.rom.len());
                     0xFF
                 }
             }
@@ -190,7 +206,15 @@ impl Cart {
                 let bank = if value == 0 { 1 } else { value & 0x7F }; // Banks 1-127, 0 becomes 1
                 self.rom_bank = bank;
                 #[cfg(debug_assertions)]
-                debug!("MBC3: ROM bank switched to {}", bank);
+                {
+                    static mut BANK_SWITCH_COUNT: u32 = 0;
+                    unsafe {
+                        BANK_SWITCH_COUNT += 1;
+                        if BANK_SWITCH_COUNT <= 10 {
+                            println!("MBC3: ROM bank switched to {} (attempt #{})", bank, BANK_SWITCH_COUNT);
+                        }
+                    }
+                }
             }
             0x4000..=0x5FFF => {
                 // RAM Bank Number (0x00-0x03) or RTC Register Select (0x08-0x0C)

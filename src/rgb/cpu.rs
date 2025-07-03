@@ -89,6 +89,8 @@ impl Cpu {
         
         // Handle HALT bug: if in HALT bug state, don't advance PC
         let pc_increment = if self.halt_bug {
+            #[cfg(debug_assertions)]
+            println!("HALT bug: Not advancing PC from 0x{:04X}, next instruction will execute twice", self.pc);
             self.halt_bug = false; // Clear flag after handling
             0 // Don't advance PC for HALT bug
         } else {
@@ -335,6 +337,27 @@ impl Cpu {
             _ => unreachable!(),
         };
         
+        #[cfg(debug_assertions)]
+        {
+            static mut INTERRUPT_VECTOR_COUNT: u32 = 0;
+            unsafe {
+                INTERRUPT_VECTOR_COUNT += 1;
+                if INTERRUPT_VECTOR_COUNT <= 10 {
+                    let interrupt_name = match interrupt_bit {
+                        VBLANK_BIT => "VBlank",
+                        LCD_STAT_BIT => "LCD STAT", 
+                        TIMER_BIT => "Timer",
+                        SERIAL_BIT => "Serial",
+                        JOYPAD_BIT => "Joypad",
+                        _ => "Unknown",
+                    };
+                    let ie = self.mmap.read(0xFFFF);
+                    let if_reg = self.mmap.read(0xFF0F);
+                    println!("CPU: Jumping to {} interrupt handler at 0x{:04X} (PC was 0x{:04X}) #{} - IE:0x{:02X} IF:0x{:02X}", 
+                        interrupt_name, vector, self.pc, INTERRUPT_VECTOR_COUNT, ie, if_reg);
+                }
+            }
+        }
         
         self.pc = vector;
         

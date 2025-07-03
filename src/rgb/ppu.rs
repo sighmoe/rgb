@@ -174,6 +174,9 @@ pub struct Ppu {
     // Interrupts
     pub vblank_interrupt: bool,
     pub stat_interrupt: bool,
+    
+    // STAT interrupt edge detection
+    prev_stat_line: bool,
 }
 
 impl Ppu {
@@ -198,6 +201,7 @@ impl Ppu {
             scanline_sprites: Vec::with_capacity(MAX_SPRITES_PER_LINE),
             vblank_interrupt: false,
             stat_interrupt: false,
+            prev_stat_line: false,
         }
     }
     
@@ -224,10 +228,11 @@ impl Ppu {
             scanline_sprites: Vec::with_capacity(MAX_SPRITES_PER_LINE),
             vblank_interrupt: false,
             stat_interrupt: false,
+            prev_stat_line: false,
         }
     }
 
-    // Simplified PPU step for smooth gameplay - prioritize regular VBlank over hardware accuracy
+    // Optimized PPU step for 60fps performance while maintaining compatibility
     pub fn step(&mut self, cycles: u16) {
         if !self.lcdc.lcd_enable {
             return;
@@ -235,85 +240,60 @@ impl Ppu {
 
         self.cycles += cycles;
         
-        // Simplified timing but with proper mode cycling for game compatibility
-        while self.cycles >= 25 { // Smaller cycle chunks for better mode timing
-            self.cycles -= 25;
+        // Process in larger chunks for better performance (114 cycles = 1 scanline)
+        while self.cycles >= 114 {
+            self.cycles -= 114;
             
-            // Handle different PPU modes with simplified timing
-            match self.mode {
-                PpuMode::OamScan => {
-                    // OAM scan for current scanline
+            // Execute one complete scanline
+            match self.ly {
+                // Visible scanlines (0-143)
+                0..=143 => {
+                    // Batch mode transitions for performance
+                    self.set_mode(PpuMode::OamScan);
                     if self.ly < SCREEN_HEIGHT as u8 {
                         self.scan_oam();
                     }
                     
-                    // Quick transition to Drawing mode
-                    self.mode = PpuMode::Drawing;
-                    self.stat.mode = PpuMode::Drawing;
-                }
-                
-                PpuMode::Drawing => {
-                    // Render the current scanline if in visible area
+                    self.set_mode(PpuMode::Drawing);
                     if self.ly < SCREEN_HEIGHT as u8 {
                         self.render_scanline();
-                        
-                        #[cfg(debug_assertions)]
-                        {
-                            static mut RENDER_COUNT: u32 = 0;
-                            unsafe {
-                                RENDER_COUNT += 1;
-                                if RENDER_COUNT % 2000 == 0 {
-                                    debug!("PPU: Still rendering scanlines, count: {}, LY: {}", RENDER_COUNT, self.ly);
-                                }
-                            }
-                        }
                     }
                     
-                    // Transition to HBlank
-                    self.mode = PpuMode::HBlank;
-                    self.stat.mode = PpuMode::HBlank;
-                }
-                
-                PpuMode::HBlank => {
-                    // Complete the scanline and advance
+                    self.set_mode(PpuMode::HBlank);
+                    
+                    // Advance to next line
                     self.ly += 1;
                     self.update_lyc_flag();
                     
                     // Check for VBlank entry
                     if self.ly == SCREEN_HEIGHT as u8 {
-                        self.mode = PpuMode::VBlank;
-                        self.stat.mode = PpuMode::VBlank;
+                        self.set_mode(PpuMode::VBlank);
                         self.vblank_interrupt = true;
-                        
-                        #[cfg(debug_assertions)]
-                        {
-                            static mut VBLANK_PPU_COUNT: u32 = 0;
-                            unsafe {
-                                VBLANK_PPU_COUNT += 1;
-                                if VBLANK_PPU_COUNT <= 10 || VBLANK_PPU_COUNT % 60 == 0 {
-                                    debug!("PPU: VBlank #{} - Frame complete at LY={}", VBLANK_PPU_COUNT, self.ly);
-                                }
-                            }
-                        }
-                    } else {
-                        // Continue to next scanline
-                        self.mode = PpuMode::OamScan;
-                        self.stat.mode = PpuMode::OamScan;
                     }
                 }
                 
-                PpuMode::VBlank => {
-                    // Advance through VBlank lines
+                // VBlank lines (144-153) - fast processing
+                144..=153 => {
                     self.ly += 1;
                     self.update_lyc_flag();
                     
-                    // Reset after VBlank period (keep it short for responsiveness)
-                    if self.ly >= 150 {
+                    // Reset to line 0 after line 153
+                    if self.ly >= 154 {
                         self.ly = 0;
-                        self.mode = PpuMode::OamScan;
-                        self.stat.mode = PpuMode::OamScan;
+                        self.set_mode(PpuMode::OamScan);
                     }
                 }
+                
+                _ => {
+                    // Reset if something goes wrong
+                    self.ly = 0;
+                    self.set_mode(PpuMode::OamScan);
+                }
+            }
+            
+            // Only check STAT interrupts when necessary (not every cycle)
+            if self.ly % 4 == 0 {
+                self.check_stat_interrupts();
             }
         }
     }
@@ -387,18 +367,6 @@ impl Ppu {
         }
     }
 
-    fn set_mode(&mut self, mode: PpuMode) {
-        self.mode = mode;
-        self.stat.mode = mode;
-
-        // Trigger STAT interrupts based on mode
-        match mode {
-            PpuMode::HBlank if self.stat.hblank_interrupt => self.stat_interrupt = true,
-            PpuMode::VBlank if self.stat.vblank_interrupt => self.stat_interrupt = true,
-            PpuMode::OamScan if self.stat.oam_interrupt => self.stat_interrupt = true,
-            _ => {}
-        }
-    }
 
     fn update_lyc_flag(&mut self) {
         let lyc_match = self.ly == self.lyc;
@@ -563,16 +531,7 @@ impl Ppu {
             let pixel_color = self.get_tile_pixel(tile_data_addr, pixel_x, pixel_y);
             let final_color = self.apply_palette(pixel_color, self.bgp);
             
-            #[cfg(debug_assertions)]
-            {
-                static mut FB_WRITE_COUNT: u32 = 0;
-                unsafe {
-                    FB_WRITE_COUNT += 1;
-                    if FB_WRITE_COUNT <= 20 && final_color != 0 {
-                        debug!("PPU: Writing non-zero pixel at ({},{}) = {}", x, y, final_color);
-                    }
-                }
-            }
+            // Removed frame buffer debug for performance
             
             self.frame_buffer[y * SCREEN_WIDTH + x] = final_color;
         }
@@ -608,16 +567,7 @@ impl Ppu {
             let pixel_color = self.get_tile_pixel(tile_data_addr, pixel_x, pixel_y);
             let final_color = self.apply_palette(pixel_color, self.bgp);
             
-            #[cfg(debug_assertions)]
-            {
-                static mut FB_WRITE_COUNT: u32 = 0;
-                unsafe {
-                    FB_WRITE_COUNT += 1;
-                    if FB_WRITE_COUNT <= 20 && final_color != 0 {
-                        debug!("PPU: Writing non-zero pixel at ({},{}) = {}", x, y, final_color);
-                    }
-                }
-            }
+            // Removed frame buffer debug for performance
             
             self.frame_buffer[y * SCREEN_WIDTH + x] = final_color;
         }
@@ -895,5 +845,64 @@ impl Ppu {
         let interrupt = self.stat_interrupt;
         self.stat_interrupt = false;
         interrupt
+    }
+    
+    // Set PPU mode and update STAT register with edge-triggered interrupt handling
+    fn set_mode(&mut self, new_mode: PpuMode) {
+        if self.mode != new_mode {
+            self.mode = new_mode;
+            self.stat.mode = new_mode;
+            
+            #[cfg(debug_assertions)]
+            {
+                static mut MODE_CHANGE_COUNT: u32 = 0;
+                unsafe {
+                    MODE_CHANGE_COUNT += 1;
+                    if MODE_CHANGE_COUNT <= 5 {
+                        debug!("PPU: Mode changed to {:?} at LY={}", new_mode, self.ly);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check for STAT interrupts with edge-triggered behavior
+    fn check_stat_interrupts(&mut self) {
+        let stat_line = self.should_trigger_stat_interrupt();
+        
+        // Edge-triggered: interrupt only on 0->1 transition
+        if stat_line && !self.prev_stat_line {
+            self.stat_interrupt = true;
+            
+            #[cfg(debug_assertions)]
+            {
+                static mut STAT_INT_COUNT: u32 = 0;
+                unsafe {
+                    STAT_INT_COUNT += 1;
+                    if STAT_INT_COUNT <= 3 {
+                        debug!("PPU: STAT interrupt triggered #{} at LY={}, mode={:?}", 
+                            STAT_INT_COUNT, self.ly, self.mode);
+                    }
+                }
+            }
+        }
+        
+        self.prev_stat_line = stat_line;
+    }
+    
+    // Determine if STAT interrupt should be triggered based on current state
+    fn should_trigger_stat_interrupt(&self) -> bool {
+        // LYC=LY interrupt
+        if self.stat.lyc_interrupt && self.stat.lyc_flag {
+            return true;
+        }
+        
+        // Mode-specific interrupts
+        match self.mode {
+            PpuMode::HBlank => self.stat.hblank_interrupt,
+            PpuMode::VBlank => self.stat.vblank_interrupt,
+            PpuMode::OamScan => self.stat.oam_interrupt,
+            PpuMode::Drawing => false, // No STAT interrupt during drawing
+        }
     }
 }

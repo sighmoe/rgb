@@ -156,7 +156,7 @@ impl Drop for GameBoyEmulator {
 
 #[macroquad::main("Game Boy Emulator")]
 async fn main() {
-    // Set target FPS to 60 (matching Game Boy refresh rate)
+    // Set target FPS to 60 (matching Game Boy refresh rate) with optimized screen size
     request_new_screen_size(640.0, 576.0); // 160*4 x 144*4 scale
     
     // Initialize logger (only in debug builds)
@@ -247,8 +247,8 @@ async fn main() {
             emulator.cpu.request_joypad_interrupt();
         }
 
-        // Run emulator for a reasonable amount per frame for smooth gameplay
-        let instructions_per_frame = 2000; // Increase to ensure PPU reaches VBlank
+        // Run emulator for optimal 60fps performance 
+        let instructions_per_frame = 4000; // Higher count for better performance
         
         for _ in 0..instructions_per_frame {
             if emulator.cpu.halted {
@@ -267,14 +267,76 @@ async fn main() {
                     emulator.cpu.request_lcd_stat_interrupt();
                 }
                 
-                // Check for pending interrupts to wake up
-                if emulator.cpu.check_pending_interrupts() {
+                // Check for pending interrupts to wake up (HALT wakes up regardless of IME)
+                let ie = emulator.cpu.mmap.read(0xFFFF);
+                let if_reg = emulator.cpu.mmap.read(0xFF0F);
+                let pending = ie & if_reg & 0x1F;
+                if pending != 0 {
                     emulator.cpu.halted = false;
+                    #[cfg(debug_assertions)]
+                    {
+                        static mut WAKE_COUNT: u32 = 0;
+                        unsafe {
+                            WAKE_COUNT += 1;
+                            if WAKE_COUNT <= 10 {
+                                println!("CPU woke from HALT #{} - IE: 0x{:02X}, IF: 0x{:02X}, pending: 0x{:02X}", 
+                                    WAKE_COUNT, ie, if_reg, pending);
+                            }
+                        }
+                    }
                 }
             } else {
                 // Execute one instruction
                 let instruction = emulator.cpu.decode();
+                
+                // Save opcode for debugging after execution
+                #[cfg(debug_assertions)]
+                let opcode = instruction.instr;
+                #[cfg(debug_assertions)]
+                let pc_before = emulator.cpu.pc;
+                
+                // Debug specific problematic instructions
+                #[cfg(debug_assertions)]
+                {
+                    if instruction.instr == 0x76 {
+                        static mut HALT_COUNT: u32 = 0;
+                        unsafe {
+                            HALT_COUNT += 1;
+                            if HALT_COUNT <= 10 {
+                                println!("HALT instruction #{} at PC: 0x{:04X}, IME: {}, IE: 0x{:02X}, IF: 0x{:02X}", 
+                                    HALT_COUNT, emulator.cpu.pc, emulator.cpu.ime, 
+                                    emulator.cpu.mmap.read(0xFFFF), emulator.cpu.mmap.read(0xFF0F));
+                            }
+                        }
+                    }
+                    
+                    // Debug the problematic LD (0x2000), A instruction
+                    if instruction.instr == 0xEA && pc_before == 0x35DC {
+                        static mut LD_DEBUG_COUNT: u32 = 0;
+                        unsafe {
+                            LD_DEBUG_COUNT += 1;
+                            if LD_DEBUG_COUNT <= 5 {
+                                println!("About to execute LD (0x2000), A #{} at PC: 0x{:04X}, A=0x{:02X}", 
+                                    LD_DEBUG_COUNT, pc_before, emulator.cpu.registers.a);
+                            }
+                        }
+                    }
+                }
+                
                 let cycles = emulator.cpu.execute(instruction);
+                
+                // Debug PC after execution for the problematic instruction
+                #[cfg(debug_assertions)]
+                if opcode == 0xEA && pc_before == 0x35DC {
+                    static mut LD_AFTER_COUNT: u32 = 0;
+                    unsafe {
+                        LD_AFTER_COUNT += 1;
+                        if LD_AFTER_COUNT <= 5 {
+                            println!("After LD execution #{}: PC was 0x{:04X}, now 0x{:04X}", 
+                                LD_AFTER_COUNT, pc_before, emulator.cpu.pc);
+                        }
+                    }
+                }
                 
                 emulator.cpu.handle_ei_delay();
                 
@@ -326,8 +388,9 @@ async fn main() {
         let non_zero_count = frame_buffer.iter().filter(|&&pixel| pixel != 0).count();
         #[cfg(debug_assertions)]
         let current_hash = {
+            // Simplified hash for better performance
             let mut hash = 0u64;
-            for (i, &pixel) in frame_buffer.iter().enumerate() {
+            for (i, &pixel) in frame_buffer.iter().step_by(4).enumerate() {
                 if pixel != 0 {
                     hash = hash.wrapping_add((i as u64) * (pixel as u64 + 1));
                 }
@@ -344,10 +407,10 @@ async fn main() {
             unsafe {
                 TOTAL_RENDER_LOOPS += 1;
                 
-                // Check if pixel count changed even if hash didn't
+                // Check if pixel count changed even if hash didn't (less frequent)
                 if non_zero_count != LAST_NON_ZERO_COUNT_DEBUG {
                     LAST_NON_ZERO_COUNT_DEBUG = non_zero_count;
-                    if TOTAL_RENDER_LOOPS % 100 == 0 {
+                    if TOTAL_RENDER_LOOPS % 1000 == 0 {
                         println!("Pixel count changed to {} (no frame hash change) at loop {}", non_zero_count, TOTAL_RENDER_LOOPS);
                     }
                 }
@@ -381,15 +444,15 @@ async fn main() {
                         (0, 0, 0)
                     };
                     
-                    // Log significant frame changes - less spam now that VBlank works
-                    if FRAME_CHANGE_COUNT <= 10 || FRAME_CHANGE_COUNT % 20 == 0 {
+                    // Log significant frame changes - minimal logging for performance
+                    if FRAME_CHANGE_COUNT <= 5 || FRAME_CHANGE_COUNT % 60 == 0 {
                         println!("FRAME UPDATE #{} (after {} render loops): {} pixels, changes: top:{} mid:{} bot:{}", 
                             FRAME_CHANGE_COUNT, TOTAL_RENDER_LOOPS, non_zero_count, area_changes.0, area_changes.1, area_changes.2);
                     }
                     
                     LAST_NON_ZERO_COUNT = non_zero_count;
                     LAST_FRAME_BUFFER = Some(frame_buffer.to_vec());
-                } else if TOTAL_RENDER_LOOPS % 1000 == 0 {
+                } else if TOTAL_RENDER_LOOPS % 5000 == 0 {
                     static mut LAST_PC: u16 = 0;
                     static mut PC_STUCK_COUNT: u32 = 0;
                     
@@ -399,6 +462,14 @@ async fn main() {
                     // Read the instruction at current PC to see what's happening
                     let opcode = emulator.cpu.mmap.read(pc);
                     let next_byte = emulator.cpu.mmap.read(pc.wrapping_add(1));
+                    let third_byte = emulator.cpu.mmap.read(pc.wrapping_add(2));
+                    
+                    // For LD (nn), A instruction (0xEA), show the full 16-bit address
+                    let full_address = if opcode == 0xEA {
+                        Some((third_byte as u16) << 8 | next_byte as u16)
+                    } else {
+                        None
+                    };
                     
                     // If this is the LCD status polling loop, check what we're reading
                     let stat_value = if opcode == 0xF0 && next_byte == 0x41 {
@@ -414,9 +485,26 @@ async fn main() {
                         LAST_PC = pc;
                     }
                     
+                    // If CPU is halted, check interrupt states
+                    let (ie_reg, if_reg, ime) = if halted {
+                        let ie = emulator.cpu.mmap.read(0xFFFF);
+                        let if_val = emulator.cpu.mmap.read(0xFF0F);
+                        (Some(ie), Some(if_val), emulator.cpu.ime)
+                    } else {
+                        (None, None, false)
+                    };
+                    
                     if let Some(stat) = stat_value {
                         println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}, Opcode: 0x{:02X} 0x{:02X}, STAT: 0x{:02X} (mode: {})", 
                             TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count, opcode, next_byte, stat, stat & 0x03);
+                    } else if let (Some(ie), Some(if_val)) = (ie_reg, if_reg) {
+                        println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}, Opcode: 0x{:02X} 0x{:02X}, IE: 0x{:02X}, IF: 0x{:02X}, IME: {}", 
+                            TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count, opcode, next_byte, ie, if_val, ime);
+                    } else if let Some(addr) = full_address {
+                        let a_register = emulator.cpu.registers.a;
+                        let stat_reg = emulator.cpu.mmap.read(0xFF41);
+                        println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}, Opcode: 0x{:02X} (LD (0x{:04X}), A=0x{:02X}), STAT:0x{:02X}", 
+                            TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count, opcode, addr, a_register, stat_reg);
                     } else {
                         println!("No frame change for {} loops - PC: 0x{:04X} (stuck: {}), Halted: {}, Pixels: {}, Opcode: 0x{:02X} 0x{:02X}", 
                             TOTAL_RENDER_LOOPS, pc, PC_STUCK_COUNT, halted, non_zero_count, opcode, next_byte);

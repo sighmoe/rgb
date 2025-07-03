@@ -33,16 +33,26 @@ fn execute_halt(cpu: &mut Cpu) -> u8 {
     if !cpu.ime && cpu.check_pending_interrupts() {
         #[cfg(debug_assertions)]
         {
-            use log::debug;
-            debug!("HALT bug triggered at PC=0x{:04X}", cpu.pc - 1);
+            static mut HALT_BUG_COUNT: u32 = 0;
+            unsafe {
+                HALT_BUG_COUNT += 1;
+                if HALT_BUG_COUNT <= 5 {
+                    println!("HALT bug triggered #{} at PC=0x{:04X}, setting halt_bug flag", HALT_BUG_COUNT, cpu.pc - 1);
+                }
+            }
         }
         cpu.halt_bug = true;
     } else {
         cpu.halted = true;
         #[cfg(debug_assertions)]
         {
-            use log::debug;
-            debug!("CPU halted at PC=0x{:04X}, IME={}", cpu.pc - 1, cpu.ime);
+            static mut HALT_COUNT: u32 = 0;
+            unsafe {
+                HALT_COUNT += 1;
+                if HALT_COUNT <= 5 {
+                    println!("CPU halted #{} at PC=0x{:04X}, IME={}", HALT_COUNT, cpu.pc - 1, cpu.ime);
+                }
+            }
         }
     }
     4
