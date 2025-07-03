@@ -371,6 +371,16 @@ impl Ppu {
         self.scanline_sprites.clear();
         
         if !self.lcdc.sprite_enable {
+            #[cfg(debug_assertions)]
+            {
+                static mut SPRITE_DISABLED_COUNT: u32 = 0;
+                unsafe {
+                    SPRITE_DISABLED_COUNT += 1;
+                    if SPRITE_DISABLED_COUNT <= 5 || SPRITE_DISABLED_COUNT % 1000 == 0 {
+                        println!("Sprites disabled by LCDC on line {}", self.ly);
+                    }
+                }
+            }
             return;
         }
 
@@ -390,6 +400,18 @@ impl Ppu {
             // Check if sprite is on current scanline
             let sprite_y = sprite.y.wrapping_sub(16);
             if self.ly >= sprite_y && self.ly < sprite_y + sprite_height {
+                #[cfg(debug_assertions)]
+                {
+                    static mut SPRITE_FOUND_COUNT: u32 = 0;
+                    unsafe {
+                        SPRITE_FOUND_COUNT += 1;
+                        if SPRITE_FOUND_COUNT <= 20 {
+                            println!("Sprite found: pos=({},{}), tile=0x{:02X}, on line {}", 
+                                sprite.x, sprite.y, sprite.tile, self.ly);
+                        }
+                    }
+                }
+                
                 self.scanline_sprites.push(sprite);
                 
                 if self.scanline_sprites.len() >= MAX_SPRITES_PER_LINE {
@@ -410,6 +432,28 @@ impl Ppu {
         }
 
 
+
+        // Debug window enable/disable changes
+        #[cfg(debug_assertions)]
+        {
+            static mut LAST_WINDOW_ENABLE: Option<bool> = None;
+            static mut LAST_WY: Option<u8> = None;
+            static mut LAST_WX: Option<u8> = None;
+            unsafe {
+                if LAST_WINDOW_ENABLE != Some(self.lcdc.window_enable) || 
+                   LAST_WY != Some(self.wy) || LAST_WX != Some(self.wx) {
+                    static mut WINDOW_CHANGE_COUNT: u32 = 0;
+                    WINDOW_CHANGE_COUNT += 1;
+                    if WINDOW_CHANGE_COUNT <= 20 {
+                        println!("Window: enable={}, WY={}, WX={} at LY={}", 
+                            self.lcdc.window_enable, self.wy, self.wx, self.ly);
+                    }
+                    LAST_WINDOW_ENABLE = Some(self.lcdc.window_enable);
+                    LAST_WY = Some(self.wy);
+                    LAST_WX = Some(self.wx);
+                }
+            }
+        }
 
         // Render background
         if self.lcdc.bg_enable {
@@ -508,6 +552,25 @@ impl Ppu {
     }
 
     fn render_sprites_line(&mut self, y: usize) {
+        // Debug sprite rendering for falling blocks
+        #[cfg(debug_assertions)]
+        if !self.scanline_sprites.is_empty() {
+            static mut SPRITE_DEBUG_COUNT: u32 = 0;
+            unsafe {
+                SPRITE_DEBUG_COUNT += 1;
+                if SPRITE_DEBUG_COUNT <= 10 || SPRITE_DEBUG_COUNT % 100 == 0 {
+                    println!("Sprites on line {}: {} sprites, palettes: OBP0=0x{:02X}, OBP1=0x{:02X}", 
+                        y, self.scanline_sprites.len(), self.obp0, self.obp1);
+                    for (i, sprite) in self.scanline_sprites.iter().enumerate() {
+                        if i < 3 { // Only show first 3 sprites
+                            println!("  Sprite {}: pos=({},{}), tile=0x{:02X}, flags=0x{:02X}", 
+                                i, sprite.x, sprite.y, sprite.tile, sprite.flags);
+                        }
+                    }
+                }
+            }
+        }
+        
         // Render sprites in reverse order for proper priority
         for sprite in self.scanline_sprites.iter().rev() {
             let sprite_y = sprite.y.wrapping_sub(16) as usize;
@@ -539,7 +602,7 @@ impl Ppu {
                 }
 
                 let actual_pixel_x = if sprite.flip_x() { 7 - pixel_x } else { pixel_x };
-                let pixel_color = self.get_tile_pixel(tile_data_addr, actual_pixel_x, 0);
+                let pixel_color = self.get_tile_pixel(tile_data_addr, actual_pixel_x, actual_line);
                 
                 if pixel_color == 0 {
                     continue; // Transparent pixel
@@ -612,7 +675,22 @@ impl Ppu {
             LCDC_ADDR => {
                 let old_enable = self.lcdc.lcd_enable;
                 let old_bg_window_tiles = self.lcdc.bg_window_tiles;
+                let old_sprite_enable = self.lcdc.sprite_enable;
                 self.lcdc = LcdcFlags::from_byte(value);
+                
+                // Debug sprite enable/disable changes
+                #[cfg(debug_assertions)]
+                if old_sprite_enable != self.lcdc.sprite_enable {
+                    static mut SPRITE_TOGGLE_COUNT: u32 = 0;
+                    unsafe {
+                        SPRITE_TOGGLE_COUNT += 1;
+                        if SPRITE_TOGGLE_COUNT <= 20 {
+                            println!("LCDC: Sprites {} at LY={}, LCDC=0x{:02X}", 
+                                if self.lcdc.sprite_enable { "ENABLED" } else { "DISABLED" }, 
+                                self.ly, value);
+                        }
+                    }
+                }
                 
                 // When switching from unsigned to signed addressing during bootstrap,
                 // copy tile data from unsigned area to signed area for compatibility
@@ -644,8 +722,32 @@ impl Ppu {
                 let new_stat = (value & 0x78) | (old_stat & 0x87);
                 self.stat = StatFlags::from_byte(new_stat);
             },
-            SCY_ADDR => self.scy = value,
-            SCX_ADDR => self.scx = value,
+            SCY_ADDR => {
+                #[cfg(debug_assertions)]
+                if value != self.scy {
+                    static mut SCY_CHANGE_COUNT: u32 = 0;
+                    unsafe {
+                        SCY_CHANGE_COUNT += 1;
+                        if SCY_CHANGE_COUNT <= 20 {
+                            println!("SCY changed: {} -> {} at LY={}", self.scy, value, self.ly);
+                        }
+                    }
+                }
+                self.scy = value;
+            },
+            SCX_ADDR => {
+                #[cfg(debug_assertions)]
+                if value != self.scx {
+                    static mut SCX_CHANGE_COUNT: u32 = 0;
+                    unsafe {
+                        SCX_CHANGE_COUNT += 1;
+                        if SCX_CHANGE_COUNT <= 20 {
+                            println!("SCX changed: {} -> {} at LY={}", self.scx, value, self.ly);
+                        }
+                    }
+                }
+                self.scx = value;
+            },
             LYC_ADDR => {
                 self.lyc = value;
                 self.update_lyc_flag();
@@ -699,6 +801,26 @@ impl Ppu {
         //     return; // OAM inaccessible during drawing and OAM scan
         // }
         
+        // Debug OAM writes to see sprite data
+        #[cfg(debug_assertions)]
+        if value != 0 {
+            static mut OAM_WRITE_COUNT: u32 = 0;
+            unsafe {
+                OAM_WRITE_COUNT += 1;
+                if OAM_WRITE_COUNT <= 20 {
+                    let sprite_index = (addr - 0xFE00) / 4;
+                    let byte_in_sprite = (addr - 0xFE00) % 4;
+                    let byte_name = match byte_in_sprite {
+                        0 => "Y",
+                        1 => "X", 
+                        2 => "Tile",
+                        3 => "Flags",
+                        _ => "?"
+                    };
+                    println!("OAM Write: Sprite {} {} = 0x{:02X} at addr 0x{:04X}", sprite_index, byte_name, value, addr);
+                }
+            }
+        }
         
         self.oam[(addr - 0xFE00) as usize] = value;
     }

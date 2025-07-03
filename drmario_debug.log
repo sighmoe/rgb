@@ -1,0 +1,76 @@
+Cartridge loaded: DR.MARIO
+Sprites disabled by LCDC on line 0
+Sprites disabled by LCDC on line 1
+Sprites disabled by LCDC on line 2
+Sprites disabled by LCDC on line 3
+Sprites disabled by LCDC on line 4
+Frame #1: 12748 instructions executed
+LCDC: Sprites ENABLED at LY=148, LCDC=0x03
+MBC3: ROM bank switched to 1 (attempt #1)
+LCDC: Sprites DISABLED at LY=0, LCDC=0x80
+CPU: Jumping to Timer interrupt handler at 0x0050 (PC was 0x2258) #1 - IE:0x0C IF:0xE0
+Frame #2: 91327 instructions executed
+LCDC: Sprites ENABLED at LY=0, LCDC=0x83
+CPU: Jumping to Timer interrupt handler at 0x0050 (PC was 0x04D6) #2 - IE:0x0D IF:0xE0
+CPU halted #1 at PC=0x0358, IME=true
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x035B) #3 - IE:0x0D IF:0xE0
+CPU: Jumping to Timer interrupt handler at 0x0050 (PC was 0x035B) #4 - IE:0x0D IF:0xE0
+CPU halted #2 at PC=0x0358, IME=true
+CPU: Jumping to Timer interrupt handler at 0x0050 (PC was 0x035B) #5 - IE:0x0D IF:0xE0
+Frame #3: 2960 instructions executed
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02C1) #6 - IE:0x0D IF:0xE0
+CPU halted #3 at PC=0x0358, IME=true
+CPU: Jumping to Timer interrupt handler at 0x0050 (PC was 0x035B) #7 - IE:0x0D IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x000B) #8 - IE:0x0D IF:0xE0
+CPU halted #4 at PC=0x0358, IME=true
+CPU: Jumping to Timer interrupt handler at 0x0050 (PC was 0x035B) #9 - IE:0x0D IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x000C) #10 - IE:0x0D IF:0xE0
+CPU halted #5 at PC=0x0358, IME=true
+SAFETY BREAK: Hit loop iteration limit 200000 with 15864 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15638 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15684 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15730 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15515 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15550 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15592 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15637 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15954 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15728 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15770 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15549 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15590 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15636 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15688 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15727 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15514 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15814 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15589 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15906 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15680 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15726 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15513 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15548 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15588 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15634 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 15679 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 16059 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 29131 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 19579 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 19462 instructions executed
+Frame #120: 19462 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 19243 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 18977 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 24552 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 23711 instructions executed
+Frame #240: 2139 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 27199 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 29767 instructions executed
+Frame #360: 3177 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 24241 instructions executed
+Frame #480: 3586 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 26535 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 26330 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 30186 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 28001 instructions executed
+SAFETY BREAK: Hit loop iteration limit 200000 with 24134 instructions executed
+Frame #600: 24134 instructions executed

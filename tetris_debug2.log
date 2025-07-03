@@ -1,0 +1,29 @@
+Cartridge loaded: TETRIS
+Sprites disabled by LCDC on line 0
+Sprites disabled by LCDC on line 1
+Sprites disabled by LCDC on line 2
+Sprites disabled by LCDC on line 3
+Sprites disabled by LCDC on line 4
+Frame #1: 12749 instructions executed
+LCDC: Sprites ENABLED at LY=148, LCDC=0x03
+MBC3: ROM bank switched to 1 (attempt #1)
+LCDC: Sprites DISABLED at LY=0, LCDC=0x80
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02BB) #1 - IE:0x09 IF:0xE0
+Frame #2: 48301 instructions executed
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x2838) #2 - IE:0x09 IF:0xE0
+LCDC: Sprites ENABLED at LY=0, LCDC=0xD3
+Frame #3: 34912 instructions executed
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #3 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #4 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #5 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #6 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #7 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #8 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #9 - IE:0x09 IF:0xE0
+CPU: Jumping to VBlank interrupt handler at 0x0040 (PC was 0x02EF) #10 - IE:0x09 IF:0xE0
+Frame #120: 3677 instructions executed
+Frame #240: 3677 instructions executed
+Frame #360: 42521 instructions executed
+Frame #480: 3785 instructions executed
+Frame #600: 3670 instructions executed
+Frame #720: 3664 instructions executed
