@@ -115,8 +115,57 @@ impl MemoryMap {
             0xFF04..=0xFF07 => {
                 self.timer.write_register(addr, val);
             }
-            // PPU Registers (0xFF40-0xFF4B)
-            0xFF40..=0xFF4B => {
+            // DMA register (0xFF46) - OAM DMA transfer
+            0xFF46 => {
+                #[cfg(debug_assertions)]
+                {
+                    static mut DMA_COUNT: u32 = 0;
+                    unsafe {
+                        DMA_COUNT += 1;
+                        if DMA_COUNT <= 10 {
+                            eprintln!("DMA transfer initiated: copying from 0x{:02X}00-0x{:02X}9F to OAM (transfer #{})", val, val, DMA_COUNT);
+                        }
+                    }
+                }
+                
+                // Perform DMA transfer: copy 160 bytes from (val * 0x100) to OAM
+                let source_addr = (val as u16) << 8; // val * 0x100
+                for i in 0..160 {
+                    let source_byte = self.read(source_addr + i);
+                    self.ppu.write_oam(0xFE00 + i, source_byte);
+                }
+                
+                // Debug first few sprites after DMA transfer and source data
+                #[cfg(debug_assertions)]
+                {
+                    static mut DMA_SPRITE_DEBUG_COUNT: u32 = 0;
+                    unsafe {
+                        DMA_SPRITE_DEBUG_COUNT += 1;
+                        if DMA_SPRITE_DEBUG_COUNT <= 5 {
+                            eprintln!("DMA #{}: Source data at 0x{:04X}:", DMA_SPRITE_DEBUG_COUNT, source_addr);
+                            for i in 0..12 { // First 12 bytes (3 sprites worth)
+                                let source_byte = self.read(source_addr + i);
+                                eprint!(" {:02X}", source_byte);
+                                if (i + 1) % 4 == 0 { eprintln!(); }
+                            }
+                            eprintln!("DMA #{}: First 3 sprites after transfer:", DMA_SPRITE_DEBUG_COUNT);
+                            for sprite_idx in 0..3 {
+                                let sprite_addr = sprite_idx * 4;
+                                let y = self.ppu.read_oam(0xFE00 + sprite_addr);
+                                let x = self.ppu.read_oam(0xFE00 + sprite_addr + 1);
+                                let tile = self.ppu.read_oam(0xFE00 + sprite_addr + 2);
+                                let flags = self.ppu.read_oam(0xFE00 + sprite_addr + 3);
+                                eprintln!("  Sprite {}: pos=({},{}), tile=0x{:02X}, flags=0x{:02X}", 
+                                    sprite_idx, x, y, tile, flags);
+                            }
+                        }
+                    }
+                }
+                
+                self.contents[addr as usize] = val;
+            }
+            // PPU Registers (0xFF40-0xFF4B) excluding DMA
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 self.ppu.write_register(addr, val);
             }
             // VRAM (0x8000-0x9FFF)

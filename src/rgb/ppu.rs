@@ -386,6 +386,41 @@ impl Ppu {
 
         let sprite_height = if self.lcdc.sprite_size { 16 } else { 8 };
         
+        // Debug all sprites in OAM to find invisible ones
+        #[cfg(debug_assertions)]
+        {
+            static mut OAM_SCAN_DEBUG_COUNT: u32 = 0;
+            static mut LAST_DEBUG_LY: u8 = 255;
+            unsafe {
+                if self.ly != LAST_DEBUG_LY {
+                    OAM_SCAN_DEBUG_COUNT += 1;
+                    LAST_DEBUG_LY = self.ly;
+                    if OAM_SCAN_DEBUG_COUNT <= 20 && (self.ly == 20 || self.ly == 80 || self.ly == 120) { // Check multiple lines
+                        let mut visible_sprites = 0;
+                        let mut total_sprites = 0;
+                        for i in 0..10 { // Check first 10 sprites
+                            let sprite_addr = i * 4;
+                            let sprite_data = [
+                                self.oam[sprite_addr],
+                                self.oam[sprite_addr + 1], 
+                                self.oam[sprite_addr + 2],
+                                self.oam[sprite_addr + 3],
+                            ];
+                            if sprite_data[0] != 0 || sprite_data[1] != 0 { // Has position data
+                                total_sprites += 1;
+                                let sprite_y = sprite_data[0].wrapping_sub(16);
+                                let is_visible = self.ly >= sprite_y && self.ly < sprite_y + sprite_height;
+                                if is_visible { visible_sprites += 1; }
+                                println!("Sprite {}: pos=({},{}), tile=0x{:02X}, flags=0x{:02X}, visible_on_line_{}={}", 
+                                    i, sprite_data[1], sprite_data[0], sprite_data[2], sprite_data[3], self.ly, is_visible);
+                            }
+                        }
+                        println!("OAM scan line {}: {}/{} sprites visible", self.ly, visible_sprites, total_sprites);
+                    }
+                }
+            }
+        }
+        
         for i in 0..MAX_SPRITES {
             let sprite_addr = i * 4;
             let sprite_data = [
@@ -595,6 +630,24 @@ impl Ppu {
 
             let tile_data_addr = tile_id as usize * 16 + actual_line * 2;
 
+            // Debug sprite tile data
+            #[cfg(debug_assertions)]
+            {
+                static mut SPRITE_TILE_DEBUG_COUNT: u32 = 0;
+                unsafe {
+                    SPRITE_TILE_DEBUG_COUNT += 1;
+                    if SPRITE_TILE_DEBUG_COUNT <= 5 && tile_id != 0 {
+                        eprintln!("Sprite tile debug: tile_id=0x{:02X}, addr=0x{:04X}, line={}, sprite_pos=({},{})", 
+                            tile_id, tile_data_addr, actual_line, sprite_x, sprite_y);
+                        let byte_offset = tile_data_addr;
+                        if byte_offset + 1 < VRAM_SIZE {
+                            eprintln!("  Tile data bytes: 0x{:02X} 0x{:02X}", 
+                                self.vram[byte_offset], self.vram[byte_offset + 1]);
+                        }
+                    }
+                }
+            }
+
             for pixel_x in 0..TILE_SIZE {
                 let screen_x = sprite_x + pixel_x;
                 if screen_x >= SCREEN_WIDTH {
@@ -602,7 +655,7 @@ impl Ppu {
                 }
 
                 let actual_pixel_x = if sprite.flip_x() { 7 - pixel_x } else { pixel_x };
-                let pixel_color = self.get_tile_pixel(tile_data_addr, actual_pixel_x, actual_line);
+                let pixel_color = self.get_tile_pixel(tile_data_addr, actual_pixel_x, 0); // Line offset already included in addr
                 
                 if pixel_color == 0 {
                     continue; // Transparent pixel
@@ -755,8 +808,32 @@ impl Ppu {
             WY_ADDR => self.wy = value,
             WX_ADDR => self.wx = value,
             BGP_ADDR => self.bgp = value,
-            OBP0_ADDR => self.obp0 = value,
-            OBP1_ADDR => self.obp1 = value,
+            OBP0_ADDR => {
+                #[cfg(debug_assertions)]
+                if value != self.obp0 {
+                    static mut OBP0_CHANGE_COUNT: u32 = 0;
+                    unsafe {
+                        OBP0_CHANGE_COUNT += 1;
+                        if OBP0_CHANGE_COUNT <= 10 {
+                            eprintln!("OBP0 palette changed: 0x{:02X} -> 0x{:02X}", self.obp0, value);
+                        }
+                    }
+                }
+                self.obp0 = value;
+            },
+            OBP1_ADDR => {
+                #[cfg(debug_assertions)]
+                if value != self.obp1 {
+                    static mut OBP1_CHANGE_COUNT: u32 = 0;
+                    unsafe {
+                        OBP1_CHANGE_COUNT += 1;
+                        if OBP1_CHANGE_COUNT <= 10 {
+                            eprintln!("OBP1 palette changed: 0x{:02X} -> 0x{:02X}", self.obp1, value);
+                        }
+                    }
+                }
+                self.obp1 = value;
+            },
             _ => {},
         }
     }
@@ -784,6 +861,39 @@ impl Ppu {
         //     return; // VRAM inaccessible during drawing
         // }
         
+        // Debug VRAM writes to tile maps and tiles
+        #[cfg(debug_assertions)]
+        {
+            static mut VRAM_WRITE_COUNT: u32 = 0;
+            unsafe {
+                VRAM_WRITE_COUNT += 1;
+                if VRAM_WRITE_COUNT <= 200 && (value != 0 || VRAM_WRITE_COUNT <= 50) {
+                    match addr {
+                        0x9800..=0x9BFF => {
+                            // Background tile map 0
+                            let tile_x = ((addr - 0x9800) % 32) as u8;
+                            let tile_y = ((addr - 0x9800) / 32) as u8;
+                            println!("VRAM: BG Map 0 tile ({},{}) = 0x{:02X} at addr 0x{:04X}", tile_x, tile_y, value, addr);
+                        },
+                        0x9C00..=0x9FFF => {
+                            // Background tile map 1 
+                            let tile_x = ((addr - 0x9C00) % 32) as u8;
+                            let tile_y = ((addr - 0x9C00) / 32) as u8;
+                            println!("VRAM: BG Map 1 tile ({},{}) = 0x{:02X} at addr 0x{:04X}", tile_x, tile_y, value, addr);
+                        },
+                        0x8000..=0x8FFF => {
+                            // Tile data (unsigned mode)
+                            let tile_id = (addr - 0x8000) / 16;
+                            let byte_in_tile = (addr - 0x8000) % 16;
+                            if value != 0 && byte_in_tile < 2 {
+                                println!("VRAM: Tile data 0x{:02X} byte {} = 0x{:02X} at addr 0x{:04X}", tile_id, byte_in_tile, value, addr);
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
         
         self.vram[(addr - 0x8000) as usize] = value;
     }
@@ -803,7 +913,7 @@ impl Ppu {
         
         // Debug OAM writes to see sprite data
         #[cfg(debug_assertions)]
-        if value != 0 {
+        {
             static mut OAM_WRITE_COUNT: u32 = 0;
             unsafe {
                 OAM_WRITE_COUNT += 1;
@@ -817,7 +927,9 @@ impl Ppu {
                         3 => "Flags",
                         _ => "?"
                     };
-                    println!("OAM Write: Sprite {} {} = 0x{:02X} at addr 0x{:04X}", sprite_index, byte_name, value, addr);
+                    if value != 0 || OAM_WRITE_COUNT <= 10 {
+                        println!("OAM Write: Sprite {} {} = 0x{:02X} at addr 0x{:04X}", sprite_index, byte_name, value, addr);
+                    }
                 }
             }
         }

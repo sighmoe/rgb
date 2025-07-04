@@ -4,6 +4,7 @@ use macroquad::prelude::*;
 use rgb::cpu::Cpu;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::time::{Duration, Instant};
 use debugger::{Debugger, DebuggerUI};
 
 struct GameBoyEmulator {
@@ -240,6 +241,11 @@ async fn main() {
     
     let mut emulator = GameBoyEmulator::new(rom_path, skip_boot_rom, trace_file, trace_json, enable_debugger);
     
+    // Game Boy timing constants
+    const TARGET_FPS: f64 = 59.7; // Game Boy's actual refresh rate is ~59.7 Hz
+    const FRAME_DURATION: Duration = Duration::from_nanos((1_000_000_000.0 / TARGET_FPS) as u64);
+    
+    let mut last_frame_time = Instant::now();
     
     loop {
         
@@ -266,10 +272,12 @@ async fn main() {
         
 
         // Run emulator until PPU completes a full frame (VBlank occurs)
-        // This ensures proper Game Boy timing at 60fps
+        // Game Boy runs at ~4.194 MHz, with ~69,905 cycles per frame at 59.7 FPS
         let mut instructions_executed = 0;
+        let mut total_cycles = 0;
         let mut loop_iterations = 0;
-        let max_instructions_per_frame = 100000; // Safety limit to prevent infinite loops
+        const CYCLES_PER_FRAME: u32 = 70224; // 4.194 MHz / 59.7 FPS = ~70,224 cycles per frame
+        let max_instructions_per_frame = 30000; // Reduced to make frames more reasonable
         let max_loop_iterations = 200000; // Safety limit for total loop iterations including HALT cycles
         
         loop {
@@ -307,6 +315,7 @@ async fn main() {
             if emulator.cpu.halted {
                 // When halted, still step the hardware
                 let halt_cycles = 4u16;
+                total_cycles += halt_cycles as u32;
                 
                 if emulator.cpu.mmap.step_timer(halt_cycles) {
                     emulator.cpu.request_timer_interrupt();
@@ -340,7 +349,7 @@ async fn main() {
                 
                 
                 let cycles = emulator.cpu.execute(instruction);
-                
+                total_cycles += cycles as u32;
                 
                 emulator.cpu.handle_ei_delay();
                 
@@ -361,6 +370,14 @@ async fn main() {
                 }
                 if stat_interrupt {
                     emulator.cpu.request_lcd_stat_interrupt();
+                }
+                
+                // Alternative: Exit if we've consumed enough cycles for one frame
+                // This can help prevent frames from running too long
+                if total_cycles >= CYCLES_PER_FRAME {
+                    #[cfg(debug_assertions)]
+                    println!("CYCLE LIMIT: Completed frame with {} cycles", total_cycles);
+                    break;
                 }
             } else {
                 // Debugger is paused - still step hardware to prevent lockup but don't execute instructions
@@ -388,7 +405,7 @@ async fn main() {
             unsafe {
                 FRAME_COUNT += 1;
                 if FRAME_COUNT <= 3 || FRAME_COUNT % 120 == 0 {
-                    println!("Frame #{}: {} instructions executed", FRAME_COUNT, instructions_executed);
+                    println!("Frame #{}: {} instructions, {} cycles", FRAME_COUNT, instructions_executed, total_cycles);
                 }
             }
         }
@@ -452,9 +469,11 @@ async fn main() {
         }
         
 
-        // Display FPS  
+        // Display FPS and timing info
         let fps = get_fps();
-        let fps_text = format!("Game Boy Emulator - FPS: {:.1}", fps);
+        let frame_elapsed = last_frame_time.elapsed();
+        let fps_text = format!("Game Boy Emulator - FPS: {:.1} | Frame time: {:.1}ms", 
+            fps, frame_elapsed.as_secs_f32() * 1000.0);
         draw_text(&fps_text, 10.0, screen_height() - 20.0, 20.0, WHITE);
         
         #[cfg(debug_assertions)]
@@ -476,6 +495,10 @@ async fn main() {
             debugger_ui.handle_input();
             debugger_ui.draw(debugger);
         }
+
+        // Frame timing control - track timing but let macroquad handle frame limiting
+        let frame_elapsed = last_frame_time.elapsed();
+        last_frame_time = Instant::now();
 
         next_frame().await
     }

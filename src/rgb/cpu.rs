@@ -353,6 +353,7 @@ impl Cpu {
                     };
                     let ie = self.mmap.read(0xFFFF);
                     let if_reg = self.mmap.read(0xFF0F);
+                    #[cfg(debug_assertions)]
                     println!("CPU: Jumping to {} interrupt handler at 0x{:04X} (PC was 0x{:04X}) #{} - IE:0x{:02X} IF:0x{:02X}", 
                         interrupt_name, vector, self.pc, INTERRUPT_VECTOR_COUNT, ie, if_reg);
                 }
